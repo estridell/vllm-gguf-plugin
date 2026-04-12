@@ -521,6 +521,10 @@ def _gguf_shard_id_as_int(shard_id: int | str) -> int:
     return qkv_idxs[shard_id]
 
 
+def _gguf_ordered_shard_ids(shard_ids: list[int | str]) -> list[int | str]:
+    return sorted(shard_ids, key=_gguf_shard_id_as_int)
+
+
 def _store_gguf_loaded_weight(
     param: Parameter | UninitializedParameter,
     loaded_weight: torch.Tensor,
@@ -917,13 +921,16 @@ class GGUFLinearMethod(LinearMethodBase):
             )
             # (dim0_start, dim0_end, dim1_size)
             shard_offset_map = dict[str, tuple[int, int, int]]()
-            for idx in shard_id:
+            ordered_shard_ids = _gguf_ordered_shard_ids(shard_id)
+            current_offset = 0
+            for idx in ordered_shard_ids:
                 id_in_container = shard_id_map[idx]
-                start = sum(x.size(0) for x in data_container[:id_in_container])
+                start = current_offset
                 end = start + data_container[id_in_container].size(0)
                 size = data_container[id_in_container].size(1)
                 padded_data[start:end, :size] = data_container[id_in_container]
                 shard_offset_map[idx] = (start, end, size)
+                current_offset = end
             padded_param = GGUFWeightParameter(
                 data=padded_data,
                 weight_loader=qweight.weight_loader,
@@ -932,7 +939,7 @@ class GGUFLinearMethod(LinearMethodBase):
                 tensor_shape=qweight.tensor_shape,
             )
             padded_param.data_container = []
-            padded_param.shard_id = list(qweight.shard_id)
+            padded_param.shard_id = ordered_shard_ids
             padded_param.shard_id_map = dict(qweight.shard_id_map)
             if hasattr(qweight, "ignore_warning"):
                 padded_param.ignore_warning = qweight.ignore_warning
