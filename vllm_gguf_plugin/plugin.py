@@ -82,39 +82,6 @@ def _patch_engine_args() -> None:
     EngineArgs._gguf_create_model_config_patched = True
 
 
-def _patch_speculator_override() -> None:
-    if getattr(config_module, "_gguf_speculator_override_patched", False):
-        return
-
-    original_maybe_override_with_speculators = config_module.maybe_override_with_speculators
-
-    @wraps(original_maybe_override_with_speculators)
-    def maybe_override_with_speculators(
-        model,
-        tokenizer,
-        trust_remote_code,
-        revision,
-        vllm_speculative_config,
-        hf_token,
-        **kwargs,
-    ):
-        if _is_gguf_reference(model):
-            return model, tokenizer, vllm_speculative_config
-        return original_maybe_override_with_speculators(
-            model=model,
-            tokenizer=tokenizer,
-            trust_remote_code=trust_remote_code,
-            revision=revision,
-            vllm_speculative_config=vllm_speculative_config,
-            hf_token=hf_token,
-            **kwargs,
-        )
-
-    config_module.maybe_override_with_speculators = maybe_override_with_speculators
-    arg_utils_module.maybe_override_with_speculators = maybe_override_with_speculators
-    config_module._gguf_speculator_override_patched = True
-
-
 def register() -> None:
     """Register the out-of-tree GGUF integration."""
     if "gguf" not in QUANTIZATION_METHODS or get_quantization_config("gguf") is not GGUFConfig:
@@ -133,4 +100,3 @@ def register() -> None:
     if not isinstance(parser, GGUFConfigParser):
         register_config_parser("gguf")(GGUFConfigParser)
     _patch_engine_args()
-    _patch_speculator_override()
