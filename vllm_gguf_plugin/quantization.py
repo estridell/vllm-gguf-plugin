@@ -105,51 +105,6 @@ class GGUFConfig(QuantizationConfig):
     def requires_hf_quant_config(cls) -> bool:
         return False
 
-    def override_is_neox_style(self, model_type: str) -> bool | None:
-        if model_type in {
-            "apertus",
-            "exaone",
-            "exaone4",
-            "jais",
-            "llama",
-            "llama4",
-            "PanguEmbedded",
-        }:
-            return False
-        return None
-
-    def should_keep_tied_lm_head(self) -> bool:
-        return True
-
-    def transform_loaded_weight(
-        self,
-        name: str,
-        loaded_weight: torch.Tensor,
-    ) -> torch.Tensor:
-        if name.endswith("norm.weight"):
-            return loaded_weight - 1
-        return loaded_weight
-
-    def remap_loaded_parameter(
-        self,
-        name: str,
-        param: torch.Tensor,
-        loaded_weight: torch.Tensor,
-        params_dict: dict[str, torch.Tensor],
-    ) -> torch.Tensor:
-        if ".fc" not in name:
-            return param
-
-        tp_size = get_tensor_model_parallel_world_size()
-        output_dim = getattr(param, "output_dim", 0)
-        output_size = param.size(output_dim) * tp_size
-        weight_out_size = loaded_weight.size(output_dim)
-        if ".fc1." in name and output_size != weight_out_size:
-            return params_dict[name.replace(".fc1.", ".fc2.")]
-        if ".fc2." in name and output_size != weight_out_size:
-            return params_dict[name.replace(".fc2.", ".fc1.")]
-        return param
-
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> "QuantizeMethodBase | None":
