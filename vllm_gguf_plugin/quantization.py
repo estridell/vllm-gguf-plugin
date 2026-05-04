@@ -632,15 +632,11 @@ class GGUFWeightTypeParameter(BasevLLMParameter):
 
 
 def _is_gguf_weight_param(param: Parameter) -> bool:
-    return isinstance(param, GGUFWeightParameter) or (
-        getattr(param, "gguf_parameter_kind", None) == "weight"
-    )
+    return isinstance(param, (GGUFWeightParameter, GGUFUninitializedWeightParameter))
 
 
 def _is_gguf_weight_type_param(param: Parameter) -> bool:
-    return isinstance(param, GGUFWeightTypeParameter) or (
-        getattr(param, "gguf_parameter_kind", None) == "weight_type"
-    )
+    return isinstance(param, (GGUFWeightTypeParameter, GGUFUninitializedWeightTypeParameter))
 
 
 def _materialize_gguf_weight_parameter(
@@ -799,12 +795,11 @@ class GGUFLinearMethod(LinearMethodBase):
         assert weight_loader is not None
 
         tensor_shape = (output_size_per_partition, input_size_per_partition)
-        qweight = GGUFUninitializedParameter(requires_grad=False)
+        qweight = GGUFUninitializedWeightParameter(requires_grad=False)
         set_weight_attrs(
             qweight,
             {
                 "weight_loader": weight_loader,
-                "gguf_parameter_kind": "weight",
                 "input_dim": 1,
                 "output_dim": 0,
                 "tensor_shape": tensor_shape,
@@ -817,12 +812,11 @@ class GGUFLinearMethod(LinearMethodBase):
         set_weight_attrs(qweight, extra_weight_attrs)
         layer.register_parameter("qweight", qweight)
 
-        qweight_type = GGUFUninitializedParameter(requires_grad=False)
+        qweight_type = GGUFUninitializedWeightTypeParameter(requires_grad=False)
         set_weight_attrs(
             qweight_type,
             {
                 "weight_loader": weight_loader,
-                "gguf_parameter_kind": "weight_type",
                 "needs_custom_weight_type": True,
                 "weight_type": 0,
                 "shard_weight_type": {},
@@ -971,7 +965,7 @@ class GGUFMoEMethod(FusedMoEMethodBase):
     ):
         tensor_shape = (num_experts, 2 * intermediate_size_per_partition, hidden_size)
         # gate up proj
-        w13_qweight = GGUFUninitializedParameter(requires_grad=False)
+        w13_qweight = GGUFUninitializedWeightParameter(requires_grad=False)
         set_weight_attrs(
             w13_qweight,
             {
@@ -997,7 +991,7 @@ class GGUFMoEMethod(FusedMoEMethodBase):
 
         tensor_shape = (num_experts, intermediate_size_per_partition, hidden_size)
         # gate down proj
-        w2_qweight = GGUFUninitializedParameter(requires_grad=False)
+        w2_qweight = GGUFUninitializedWeightParameter(requires_grad=False)
         set_weight_attrs(
             w2_qweight,
             {
@@ -1075,12 +1069,11 @@ class GGUFEmbeddingMethod(GGUFLinearMethod):
         extra_weight_attrs.pop("weight_loader", None)
 
         tensor_shape = (output_size_per_partition, input_size_per_partition)
-        qweight = GGUFUninitializedParameter(requires_grad=False)
+        qweight = GGUFUninitializedWeightParameter(requires_grad=False)
         set_weight_attrs(
             qweight,
             {
                 "weight_loader": partial(_gguf_embedding_weight_loader, layer),
-                "gguf_parameter_kind": "weight",
                 "input_dim": 1,
                 "output_dim": 0,
                 "tensor_shape": tensor_shape,
@@ -1093,12 +1086,11 @@ class GGUFEmbeddingMethod(GGUFLinearMethod):
         set_weight_attrs(qweight, extra_weight_attrs)
         layer.register_parameter("qweight", qweight)
 
-        qweight_type = GGUFUninitializedParameter(requires_grad=False)
+        qweight_type = GGUFUninitializedWeightTypeParameter(requires_grad=False)
         set_weight_attrs(
             qweight_type,
             {
                 "weight_loader": _gguf_embedding_weight_type_loader,
-                "gguf_parameter_kind": "weight_type",
                 "needs_custom_weight_type": True,
                 "weight_type": 0,
                 "shard_weight_type": {},
@@ -1133,33 +1125,34 @@ class GGUFEmbeddingMethod(GGUFLinearMethod):
         )
 
 
-class GGUFUninitializedParameter(UninitializedParameter):
+class GGUFUninitializedWeightParameter(UninitializedParameter):
     cls_to_become = Parameter
     data_container: list[torch.Tensor]
 
-    def _is_weight_type(self) -> bool:
-        return getattr(self, "gguf_parameter_kind", None) == "weight_type"
-
     def load_column_parallel_weight(self, loaded_weight: torch.Tensor):
-        if self._is_weight_type():
-            _store_gguf_weight_type(self, loaded_weight)
-        else:
-            _store_gguf_loaded_weight(self, loaded_weight)
+        _store_gguf_loaded_weight(self, loaded_weight)
 
     def load_row_parallel_weight(self, loaded_weight: torch.Tensor):
-        if self._is_weight_type():
-            _store_gguf_weight_type(self, loaded_weight)
-        else:
-            _store_gguf_loaded_weight(self, loaded_weight)
+        _store_gguf_loaded_weight(self, loaded_weight)
 
     def load_merged_column_weight(self, loaded_weight: torch.Tensor, **kwargs):
-        if self._is_weight_type():
-            _store_gguf_weight_type(self, loaded_weight, shard_id=kwargs.get("shard_id"))
-        else:
-            _store_gguf_loaded_weight(self, loaded_weight, shard_id=kwargs.get("shard_id"))
+        _store_gguf_loaded_weight(self, loaded_weight, shard_id=kwargs.get("shard_id"))
 
     def load_qkv_weight(self, loaded_weight: torch.Tensor, **kwargs):
-        if self._is_weight_type():
-            _store_gguf_weight_type(self, loaded_weight, shard_id=kwargs.get("shard_id"))
-        else:
-            _store_gguf_loaded_weight(self, loaded_weight, shard_id=kwargs.get("shard_id"))
+        _store_gguf_loaded_weight(self, loaded_weight, shard_id=kwargs.get("shard_id"))
+
+
+class GGUFUninitializedWeightTypeParameter(UninitializedParameter):
+    cls_to_become = Parameter
+
+    def load_column_parallel_weight(self, loaded_weight: torch.Tensor):
+        _store_gguf_weight_type(self, loaded_weight)
+
+    def load_row_parallel_weight(self, loaded_weight: torch.Tensor):
+        _store_gguf_weight_type(self, loaded_weight)
+
+    def load_merged_column_weight(self, loaded_weight: torch.Tensor, **kwargs):
+        _store_gguf_weight_type(self, loaded_weight, shard_id=kwargs.get("shard_id"))
+
+    def load_qkv_weight(self, loaded_weight: torch.Tensor, **kwargs):
+        _store_gguf_weight_type(self, loaded_weight, shard_id=kwargs.get("shard_id"))
