@@ -4,7 +4,6 @@
 from collections.abc import Mapping
 from functools import partial
 from types import MappingProxyType
-from types import MethodType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -15,7 +14,10 @@ import torch
 from gguf import GGMLQuantizationType as WeightType
 from torch.nn.parameter import Parameter, UninitializedParameter
 
-from vllm.distributed import get_tensor_model_parallel_world_size
+from vllm.distributed import (
+    get_tensor_model_parallel_rank,
+    get_tensor_model_parallel_world_size,
+)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.activation import (
     MoEActivation,
@@ -32,8 +34,6 @@ from vllm.model_executor.layers.fused_moe.layer import (
 from vllm.model_executor.layers.linear import (
     LinearBase,
     LinearMethodBase,
-    MergedColumnParallelLinear,
-    QKVParallelLinear,
     RowParallelLinear,
     UnquantizedLinearMethod,
     register_weight_loader_v2_supported_method,
@@ -452,7 +452,6 @@ def _resolve_gguf_weight_loader(
     layer: torch.nn.Module,
     fallback_weight_loader=None,
 ):
-    _patch_gguf_weight_loader_v2(layer)
     return (
         layer.weight_loader_v2
         if hasattr(layer, "weight_loader_v2")
@@ -559,19 +558,64 @@ def _gguf_embedding_weight_type_loader(
 
 
 class _GGUFParamLoadMixin:
-    """Mixin providing GGUF parameter weight loading methods."""
+    """Mixin providing GGUF parameter weight loading methods.
+
+    TP slicing is applied here because vllm's weight_loader_v2 calls these
+    methods with the full loaded tensor, expecting the parameter itself to
+    apply the correct per-rank slice. GGUF tensors are always quantized
+    row-wise, so output-parallel layers (column/merged/qkv) slice along
+    dim 0 (output rows), while row-parallel layers slice along dim 1
+    (encoded input columns).
+    """
 
     def load_column_parallel_weight(self, loaded_weight: torch.Tensor):
+        tp_rank = get_tensor_model_parallel_rank()
+        tp_size = get_tensor_model_parallel_world_size()
+        if tp_size > 1 and loaded_weight.ndim >= 1:
+            shard_size = loaded_weight.shape[0] // tp_size
+            if shard_size > 0:
+                loaded_weight = loaded_weight.narrow(0, tp_rank * shard_size, shard_size)
         self._store(loaded_weight)
 
     def load_row_parallel_weight(self, loaded_weight: torch.Tensor):
+        tp_rank = get_tensor_model_parallel_rank()
+        tp_size = get_tensor_model_parallel_world_size()
+        # Row-parallel slices along the input dimension (encoded columns, dim 1).
+        # GGUF quantizes in blocks along rows, so column-slicing is valid when
+        # input_size is divisible by (block_size * tp_size).
+        if tp_size > 1 and loaded_weight.ndim >= 2:
+            shard_size = loaded_weight.shape[1] // tp_size
+            if shard_size > 0:
+                loaded_weight = loaded_weight.narrow(1, tp_rank * shard_size, shard_size)
         self._store(loaded_weight)
 
     def load_merged_column_weight(self, loaded_weight: torch.Tensor, **kwargs):
-        self._store(loaded_weight, shard_id=kwargs.get("shard_id"))
+        shard_id = kwargs.get("shard_id")
+        tp_rank = kwargs.get("tp_rank", 0)
+        shard_size = kwargs.get("shard_size")  # per-rank output rows
+        if shard_size is not None and loaded_weight.ndim >= 1 and shard_size > 0:
+            if shard_size < loaded_weight.shape[0]:
+                loaded_weight = loaded_weight.narrow(0, tp_rank * shard_size, shard_size)
+        self._store(loaded_weight, shard_id=shard_id)
 
     def load_qkv_weight(self, loaded_weight: torch.Tensor, **kwargs):
-        self._store(loaded_weight, shard_id=kwargs.get("shard_id"))
+        shard_id = kwargs.get("shard_id")
+        tp_rank = kwargs.get("tp_rank", 0)
+        shard_size = kwargs.get("shard_size")  # per-rank output rows
+        # num_heads here is num_kv_head_replicas (for k/v in GQA models)
+        num_kv_head_replicas = kwargs.get("num_heads", 1)
+        if shard_size is not None and loaded_weight.ndim >= 1 and shard_size > 0:
+            if shard_size < loaded_weight.shape[0]:
+                # For k/v with GQA replicas, multiple ranks share the same heads
+                effective_tp_rank = (
+                    tp_rank // num_kv_head_replicas
+                    if shard_id in ("k", "v")
+                    else tp_rank
+                )
+                loaded_weight = loaded_weight.narrow(
+                    0, effective_tp_rank * shard_size, shard_size
+                )
+        self._store(loaded_weight, shard_id=shard_id)
 
 
 class GGUFWeightParameter(_GGUFParamLoadMixin, BasevLLMParameter):
@@ -680,40 +724,6 @@ def _materialize_gguf_weight_type_parameter(
     if hasattr(raw_param, "ignore_warning"):
         qweight_type.ignore_warning = raw_param.ignore_warning
     layer.register_parameter(param_name, qweight_type)
-
-
-def _gguf_weight_loader_v2(
-    self,
-    param: Parameter,
-    loaded_weight: torch.Tensor,
-    loaded_shard_id: tuple[int, ...] | int | str | None = None,
-):
-    if hasattr(param, "_store"):
-        self.validate_shard_id(loaded_shard_id)
-        if loaded_shard_id is None:
-            param._store(loaded_weight)
-            return
-        if isinstance(loaded_shard_id, tuple):
-            for idx in loaded_shard_id:
-                param._store(loaded_weight, shard_id=idx)
-            return
-        param._store(loaded_weight, shard_id=loaded_shard_id)
-        return
-
-    return self._gguf_original_weight_loader_v2(param, loaded_weight, loaded_shard_id)
-
-
-def _patch_gguf_weight_loader_v2(layer: torch.nn.Module) -> None:
-    if getattr(layer, "_gguf_weight_loader_v2_patched", False):
-        return
-    if not hasattr(layer, "weight_loader_v2"):
-        return
-
-    layer._gguf_original_weight_loader_v2 = layer.weight_loader_v2
-    if isinstance(layer, (QKVParallelLinear, MergedColumnParallelLinear)):
-        layer.weight_loader_v2 = MethodType(_gguf_weight_loader_v2, layer)
-    layer._gguf_weight_loader_v2_patched = True
-
 
 @register_weight_loader_v2_supported_method
 class GGUFLinearMethod(LinearMethodBase):
