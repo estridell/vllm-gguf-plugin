@@ -23,10 +23,9 @@ def download_gguf(
     ignore_patterns: str | list[str] | None = None,
 ) -> str:
     allow_patterns = [
-        f"*-{quant_type}.gguf",
-        f"*-{quant_type}-*.gguf",
-        f"*/*-{quant_type}.gguf",
-        f"*/*-{quant_type}-*.gguf",
+        f"{prefix}-{qt}{suffix}.gguf"
+        for qt in (quant_type.upper(), quant_type.lower())
+        for prefix, suffix in (("*", ""), ("*", "-*"), ("*/*", ""), ("*/*", "-*"))
     ]
 
     folder = snapshot_download(
