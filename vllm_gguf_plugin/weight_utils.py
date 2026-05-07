@@ -8,9 +8,9 @@ from pathlib import Path
 import gguf
 import numpy as np
 import torch
+from huggingface_hub import snapshot_download
 
 from vllm.logger import init_logger
-from vllm.model_executor.model_loader.weight_utils import download_weights_from_hf
 
 logger = init_logger(__name__)
 
@@ -29,9 +29,8 @@ def download_gguf(
         f"*/*-{quant_type}-*.gguf",
     ]
 
-    logger.info("Downloading GGUF weights (%s) from %s ...", quant_type, repo_id)
-    folder = download_weights_from_hf(
-        model_name_or_path=repo_id,
+    folder = snapshot_download(
+        repo_id=repo_id,
         cache_dir=cache_dir,
         allow_patterns=allow_patterns,
         revision=revision,
