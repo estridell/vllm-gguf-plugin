@@ -24,6 +24,7 @@ from .weight_utils import (
     get_gguf_extra_tensor_names,
     get_gguf_weight_type_map,
 )
+from .gguf_utils import maybe_patch_hf_config_from_gguf
 from vllm.utils.torch_utils import set_default_torch_dtype
 
 if TYPE_CHECKING:
@@ -177,6 +178,11 @@ class GGUFModelLoader(BaseModelLoader):
     ) -> nn.Module:
         device_config = vllm_config.device_config
         local_model_path = self._prepare_weights(model_config)
+        model_config.hf_config = maybe_patch_hf_config_from_gguf(
+            local_model_path,
+            model_config.hf_config,
+        )
+        vllm_config.model_config.hf_config = model_config.hf_config
         gguf_weights_map = self._get_gguf_weights_map(model_config)
         # we can only know if tie word embeddings after mapping weights
         gguf_files = self._get_all_gguf_files(local_model_path)

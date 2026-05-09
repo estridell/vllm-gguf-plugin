@@ -320,7 +320,7 @@ class Gemma3GGUFAdapter(GGUFWeightsAdapter):
 
     _EXTRA_PREFIXES = ("model.vision_tower.", "model.multi_modal_projector.")
     _mapper: WeightsMapper | None = None
-    _TEXT_PREFIX_RE = r"(?:model\.language_model\.)?model\."
+    _TEXT_PREFIX_RE = r"(?:model\.language_model\.|model\.)"
     _RMS_NORM_PATTERNS = (
         regex.compile(rf"^{_TEXT_PREFIX_RE}norm\.weight$"),
         regex.compile(
@@ -333,8 +333,8 @@ class Gemma3GGUFAdapter(GGUFWeightsAdapter):
         regex.compile(r"^model\.multi_modal_projector\.mm_soft_emb_norm\.weight$"),
     )
     _TEXT_GLOBAL_TENSORS = {
-        "token_embd.weight": "model.embed_tokens.weight",
-        "output_norm.weight": "model.norm.weight",
+        "token_embd.weight": "embed_tokens.weight",
+        "output_norm.weight": "norm.weight",
         "output.weight": "lm_head.weight",
     }
     _TEXT_BLOCK_TENSORS = {
@@ -360,9 +360,8 @@ class Gemma3GGUFAdapter(GGUFWeightsAdapter):
     def build_name_map(self, model_config: "ModelConfig") -> dict[str, str]:
         config = model_config.hf_config
         text_config = config.get_text_config()
-        text_prefix = ""
-        if getattr(config, "vision_config", None) is not None:
-            text_prefix = "model.language_model."
+        is_multimodal = getattr(config, "vision_config", None) is not None
+        text_prefix = "model.language_model." if is_multimodal else "model."
 
         mapping: dict[str, str] = {}
         for gguf_name, hf_name in self._TEXT_GLOBAL_TENSORS.items():
@@ -374,7 +373,7 @@ class Gemma3GGUFAdapter(GGUFWeightsAdapter):
         for idx in range(text_config.num_hidden_layers):
             for gguf_suffix, hf_suffix in self._TEXT_BLOCK_TENSORS.items():
                 mapping[f"blk.{idx}.{gguf_suffix}"] = (
-                    f"{text_prefix}model.layers.{idx}.{hf_suffix}"
+                    f"{text_prefix}layers.{idx}.{hf_suffix}"
                 )
 
         return mapping

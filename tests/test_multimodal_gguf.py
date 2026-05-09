@@ -9,6 +9,7 @@ and compares logprobs against AutoModelForImageTextToText.
 
 import gc
 import os
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
@@ -42,6 +43,15 @@ class GGUFMMTestConfig(NamedTuple):
     @property
     def gguf_model(self) -> str:
         """Download backbone + mmproj; return local path to backbone."""
+        repo_path = Path(self.gguf_repo)
+        if repo_path.is_dir():
+            mmproj_path = repo_path / self.gguf_mmproj
+            backbone_path = repo_path / self.gguf_backbone
+            assert mmproj_path.is_file(), f"Missing GGUF mmproj file: {mmproj_path}"
+            assert (
+                backbone_path.is_file()
+            ), f"Missing GGUF backbone file: {backbone_path}"
+            return str(backbone_path)
         hf_hub_download(self.gguf_repo, filename=self.gguf_mmproj)
         return hf_hub_download(self.gguf_repo, filename=self.gguf_backbone)
 
@@ -74,9 +84,9 @@ GEMMA3_CONFIG = GGUFMMTestConfig(
 
 GEMMA3_CONFIG_PAN_AND_SCAN = GGUFMMTestConfig(
     original_model="google/gemma-3-4b-it",
-    gguf_repo="unsloth/gemma-3-4b-it-GGUF",
-    gguf_backbone="gemma-3-4b-it-BF16.gguf",
-    gguf_mmproj="mmproj-BF16.gguf",
+    gguf_repo="google/gemma-3-4b-it-qat-q4_0-gguf",
+    gguf_backbone="gemma-3-4b-it-q4_0.gguf",
+    gguf_mmproj="mmproj-model-f16-4B.gguf",
     prompt=_GEMMA3_PROMPTS,
     image_names=_GEMMA3_IMAGE_NAMES,
     max_model_len=4096,
