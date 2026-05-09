@@ -74,24 +74,34 @@ def get_gguf_weight_type_map(
 
 
 def gguf_quant_weights_iterator(
-    gguf_file: str | Path, gguf_to_hf_name_map: dict[str, str]
+    gguf_file: str | Path, gguf_to_hf_name_map: dict[str, str] | None
 ) -> Generator[tuple[str, torch.Tensor], None, None]:
     yield from gguf_quant_weights_iterator_multi([gguf_file], gguf_to_hf_name_map)
 
 
 def gguf_quant_weights_iterator_multi(
-    gguf_files: list[str], gguf_to_hf_name_map: dict[str, str]
+    gguf_files: list[str], gguf_to_hf_name_map: dict[str, str] | None
 ) -> Generator[tuple[str, torch.Tensor], None, None]:
+    """Yield ``(name, tensor)`` for all tensors in *gguf_files*.
+
+    When *gguf_to_hf_name_map* is ``None``, raw GGUF tensor names are used
+    directly (useful when a caller will apply a :class:`WeightsMapper`
+    afterwards).  When a mapping is provided, tensors not present in the map
+    are skipped and names are translated accordingly.
+    """
     _QUANT_TYPES = ("F32", "BF16", "F16")
 
     for gguf_file in gguf_files:
         reader = gguf.GGUFReader(gguf_file)
         for tensor in reader.tensors:
-            if tensor.name not in gguf_to_hf_name_map:
-                continue
-            weight_type = tensor.tensor_type
-            name = gguf_to_hf_name_map[tensor.name]
+            if gguf_to_hf_name_map is not None:
+                if tensor.name not in gguf_to_hf_name_map:
+                    continue
+                name = gguf_to_hf_name_map[tensor.name]
+            else:
+                name = tensor.name
 
+            weight_type = tensor.tensor_type
             if weight_type.name not in _QUANT_TYPES:
                 yield name.replace("weight", "qweight_type"), torch.tensor(weight_type)
                 name = name.replace("weight", "qweight")

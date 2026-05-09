@@ -272,6 +272,19 @@ def extract_vision_config_from_gguf(mmproj_path: str) -> "SiglipVisionConfig | N
     return config
 
 
+def extract_vocab_size_from_gguf(model_path: str | Path) -> int | None:
+    """Extract vocab size from a GGUF backbone file."""
+    if not check_gguf_file(model_path):
+        return None
+
+    reader = gguf.GGUFReader(str(model_path))
+    field = reader.get_field(Keys.Tokenizer.LIST)
+    if field is None:
+        logger.warning("Missing tokenizer token list in GGUF file: %s", model_path)
+        return None
+    return len(field.contents())
+
+
 def maybe_patch_hf_config_from_gguf(
     model: str,
     hf_config: PretrainedConfig,
@@ -293,6 +306,14 @@ def maybe_patch_hf_config_from_gguf(
     Returns:
         Updated HuggingFace config
     """
+    vocab_size = extract_vocab_size_from_gguf(model)
+    if vocab_size is not None:
+        if hasattr(hf_config, "vocab_size"):
+            hf_config.update({"vocab_size": vocab_size})
+        text_config = hf_config.get_text_config()
+        if hasattr(text_config, "vocab_size"):
+            text_config.update({"vocab_size": vocab_size})
+
     # Patch multimodal config if mmproj.gguf exists
     mmproj_path = detect_gguf_multimodal(model)
     if mmproj_path is not None:
@@ -307,6 +328,8 @@ def maybe_patch_hf_config_from_gguf(
                 vision_config=vision_config,
                 architectures=["Gemma3ForConditionalGeneration"],
             )
+            if vocab_size is not None:
+                new_hf_config.text_config.update({"vocab_size": vocab_size})
             hf_config = new_hf_config
 
     return hf_config

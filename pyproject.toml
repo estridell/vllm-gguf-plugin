@@ -17,3 +17,8 @@ gguf = "vllm_gguf_plugin:register"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["vllm_gguf_plugin*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (large model downloads, requires GPU)",
+]
