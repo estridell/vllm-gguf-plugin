@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
-import sys
 from functools import wraps
 from pathlib import Path
 
 import vllm.engine.arg_utils as arg_utils_module
 import vllm.transformers_utils.config as config_module
+from vllm.config.load import LoadConfig
+from vllm.engine.arg_utils import EngineArgs
 from vllm.model_executor.layers.quantization import (
-    _CUSTOMIZED_METHOD_TO_QUANT_CONFIG,
+    QUANTIZATION_METHODS,
+    get_quantization_config,
     register_quantization_config,
 )
 from vllm.model_executor.model_loader import (
     _LOAD_FORMAT_TO_MODEL_LOADER,
+    get_model_loader,
     register_model_loader,
 )
-from vllm.engine.arg_utils import EngineArgs
 from vllm.transformers_utils.config import get_config_parser, register_config_parser
 
 from .config_parser import GGUFConfigParser
@@ -81,10 +83,10 @@ def _patch_engine_args() -> None:
 
 
 def _patch_speculator_probe() -> None:
-    if getattr(config_module, "_gguf_speculator_probe_patched", False):
+    if getattr(arg_utils_module, "_gguf_speculator_probe_patched", False):
         return
 
-    original_maybe_override = config_module.maybe_override_with_speculators
+    original_maybe_override = arg_utils_module.maybe_override_with_speculators
 
     @wraps(original_maybe_override)
     def maybe_override_with_speculators(model, tokenizer, *args, **kwargs):
@@ -92,18 +94,21 @@ def _patch_speculator_probe() -> None:
             return model, tokenizer, kwargs.get("vllm_speculative_config")
         return original_maybe_override(model, tokenizer, *args, **kwargs)
 
+    arg_utils_module.maybe_override_with_speculators = maybe_override_with_speculators
     config_module.maybe_override_with_speculators = maybe_override_with_speculators
+    arg_utils_module._gguf_speculator_probe_patched = True
     config_module._gguf_speculator_probe_patched = True
+
 
 def register() -> None:
     """Register the out-of-tree GGUF integration."""
-    if _CUSTOMIZED_METHOD_TO_QUANT_CONFIG.get("gguf") is not GGUFConfig:
+    if "gguf" not in QUANTIZATION_METHODS or get_quantization_config("gguf") is not GGUFConfig:
         register_quantization_config("gguf")(GGUFConfig)
-    sys.modules["vllm.model_executor.layers.quantization.gguf"] = sys.modules[
-        GGUFConfig.__module__
-    ]
 
-    if _LOAD_FORMAT_TO_MODEL_LOADER.get("gguf") is not GGUFModelLoader:
+    if (
+        "gguf" not in _LOAD_FORMAT_TO_MODEL_LOADER
+        or not isinstance(get_model_loader(LoadConfig(load_format="gguf")), GGUFModelLoader)
+    ):
         register_model_loader("gguf")(GGUFModelLoader)
 
     try:
