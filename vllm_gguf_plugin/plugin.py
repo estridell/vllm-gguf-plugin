@@ -81,7 +81,6 @@ def _patch_engine_args() -> None:
     EngineArgs.create_model_config = create_model_config
     EngineArgs._gguf_create_model_config_patched = True
 
-
 def register() -> None:
     """Register the out-of-tree GGUF integration."""
     if "gguf" not in QUANTIZATION_METHODS or get_quantization_config("gguf") is not GGUFConfig:

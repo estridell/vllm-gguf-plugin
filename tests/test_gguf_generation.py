@@ -75,6 +75,7 @@ MODELS = [
     STABLELM_CONFIG,
     # DOLPHIN_CONFIG,   # FIXME(Isotr0py): Investigate later
     GEMMA3_CONFIG,
+    OLMOE_CONFIG,
     # STARCODER_CONFIG,  # broken
 ]
 
