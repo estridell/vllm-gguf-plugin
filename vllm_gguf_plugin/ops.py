@@ -137,3 +137,7 @@ def ggml_moe_a8_vec(
 
 def ggml_moe_get_block_size(quant_type: int) -> int:
     return torch.ops._C_gguf.ggml_moe_get_block_size(quant_type)
+
+
+def moe_sum(input: torch.Tensor, output: torch.Tensor) -> None:
+    torch.ops._moe_C.moe_sum(input, output)
