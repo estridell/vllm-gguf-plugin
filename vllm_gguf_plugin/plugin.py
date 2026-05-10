@@ -5,6 +5,8 @@ from pathlib import Path
 
 import vllm.engine.arg_utils as arg_utils_module
 import vllm.transformers_utils.config as config_module
+from vllm.config.load import LoadConfig
+from vllm.engine.arg_utils import EngineArgs
 from vllm.model_executor.layers.quantization import (
     QUANTIZATION_METHODS,
     get_quantization_config,
@@ -15,8 +17,6 @@ from vllm.model_executor.model_loader import (
     get_model_loader,
     register_model_loader,
 )
-from vllm.config.load import LoadConfig
-from vllm.engine.arg_utils import EngineArgs
 from vllm.transformers_utils.config import get_config_parser, register_config_parser
 
 from .config_parser import GGUFConfigParser
@@ -81,6 +81,25 @@ def _patch_engine_args() -> None:
     EngineArgs.create_model_config = create_model_config
     EngineArgs._gguf_create_model_config_patched = True
 
+
+def _patch_speculator_probe() -> None:
+    if getattr(arg_utils_module, "_gguf_speculator_probe_patched", False):
+        return
+
+    original_maybe_override = arg_utils_module.maybe_override_with_speculators
+
+    @wraps(original_maybe_override)
+    def maybe_override_with_speculators(model, tokenizer, *args, **kwargs):
+        if _is_gguf_reference(model):
+            return model, tokenizer, kwargs.get("vllm_speculative_config")
+        return original_maybe_override(model, tokenizer, *args, **kwargs)
+
+    arg_utils_module.maybe_override_with_speculators = maybe_override_with_speculators
+    config_module.maybe_override_with_speculators = maybe_override_with_speculators
+    arg_utils_module._gguf_speculator_probe_patched = True
+    config_module._gguf_speculator_probe_patched = True
+
+
 def register() -> None:
     """Register the out-of-tree GGUF integration."""
     if "gguf" not in QUANTIZATION_METHODS or get_quantization_config("gguf") is not GGUFConfig:
@@ -99,3 +118,4 @@ def register() -> None:
     if not isinstance(parser, GGUFConfigParser):
         register_config_parser("gguf")(GGUFConfigParser)
     _patch_engine_args()
+    _patch_speculator_probe()
