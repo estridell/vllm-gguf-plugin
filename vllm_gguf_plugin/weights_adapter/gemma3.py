@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import re
 
-import regex
 import torch
 from vllm.model_executor.models.utils import WeightsMapper
 
@@ -53,18 +52,6 @@ class Gemma3GGUFAdapter(GGUFWeightsAdapter):
 
     _EXTRA_PREFIXES = ("model.vision_tower.", "model.multi_modal_projector.")
     _mapper: WeightsMapper | None = None
-    _TEXT_PREFIX_RE = r"(?:model\.language_model\.|model\.)"
-    _RMS_NORM_PATTERNS = (
-        regex.compile(rf"^{_TEXT_PREFIX_RE}norm\.weight$"),
-        regex.compile(
-            rf"^{_TEXT_PREFIX_RE}layers\.\d+\.(input|post_attention)_layernorm\.weight$"
-        ),
-        regex.compile(
-            rf"^{_TEXT_PREFIX_RE}layers\.\d+\.(pre|post)_feedforward_layernorm\.weight$"
-        ),
-        regex.compile(rf"^{_TEXT_PREFIX_RE}layers\.\d+\.self_attn\.[qk]_norm\.weight$"),
-        regex.compile(r"^model\.multi_modal_projector\.mm_soft_emb_norm\.weight$"),
-    )
     _TEXT_GLOBAL_TENSORS = {
         "token_embd.weight": "embed_tokens.weight",
         "output_norm.weight": "norm.weight",
@@ -130,6 +117,6 @@ class Gemma3GGUFAdapter(GGUFWeightsAdapter):
         hf_name: str,
         weight: torch.Tensor,
     ) -> torch.Tensor:
-        if any(regex.fullmatch(p, hf_name) for p in self._RMS_NORM_PATTERNS):
+        if hf_name.endswith("norm.weight"):
             return weight - 1
         return weight

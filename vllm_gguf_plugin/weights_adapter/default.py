@@ -347,8 +347,5 @@ class GGUFWeightsAdapter(BaseGGUFWeightsAdapter):
         gguf_files = self._get_all_gguf_files(model_path)
         for extra_file in self.extra_gguf_files(model_path):
             yield from self.load_extra_weights(extra_file, gguf_to_hf_name_map)
-        if len(gguf_files) > 1:
-            weights = gguf_quant_weights_iterator_multi(gguf_files, gguf_to_hf_name_map)
-        else:
-            weights = gguf_quant_weights_iterator(gguf_files[0], gguf_to_hf_name_map)
+        weights = gguf_quant_weights_iterator_multi(gguf_files, gguf_to_hf_name_map)
         yield from self.map_weights(weights)
