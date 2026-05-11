@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from vllm_gguf_plugin.gguf_utils import (
+    extract_lm_head_from_gguf,
     is_gguf,
     is_local_gguf_quant,
     is_remote_gguf,
@@ -211,3 +212,25 @@ class TestIsGGUF:
         assert not is_gguf("https://repo/model:Q2_K")
         assert not is_gguf("s3://bucket/repo/model:IQ1_S")
         assert not is_gguf("gs://bucket/repo/model:Q2_K")
+
+
+class TestExtractLMHeadFromGGUF:
+    @patch("vllm_gguf_plugin.gguf_utils.check_gguf_file", return_value=True)
+    @patch("vllm_gguf_plugin.gguf_utils.gguf.GGUFReader")
+    def test_matches_only_exact_output_weight(self, mock_reader_cls, _mock_check):
+        mock_reader_cls.return_value.tensors = [
+            type("Tensor", (), {"name": "blk.0.attn_output.weight"})(),
+            type("Tensor", (), {"name": "output_norm.weight"})(),
+        ]
+
+        assert not extract_lm_head_from_gguf("/tmp/model.gguf")
+
+    @patch("vllm_gguf_plugin.gguf_utils.check_gguf_file", return_value=True)
+    @patch("vllm_gguf_plugin.gguf_utils.gguf.GGUFReader")
+    def test_detects_exact_output_weight(self, mock_reader_cls, _mock_check):
+        mock_reader_cls.return_value.tensors = [
+            type("Tensor", (), {"name": "blk.0.attn_output.weight"})(),
+            type("Tensor", (), {"name": "output.weight"})(),
+        ]
+
+        assert extract_lm_head_from_gguf("/tmp/model.gguf")

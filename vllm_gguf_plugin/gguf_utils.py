@@ -292,7 +292,7 @@ def extract_lm_head_from_gguf(model_path: str | Path) -> bool:
 
     reader = gguf.GGUFReader(str(model_path))
     for tensor in reader.tensors:
-        if tensor.name.endswith("output.weight"):
+        if tensor.name == "output.weight":
             return True
     return False
 

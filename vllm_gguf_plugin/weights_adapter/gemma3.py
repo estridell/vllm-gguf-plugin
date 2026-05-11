@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 def build_gemma3_mapper(is_multimodal: bool) -> WeightsMapper:
     backbone_prefix = "language_model.model." if is_multimodal else "model."
+    lm_head_prefix = "language_model." if is_multimodal else "model."
     orig_to_new_prefix: dict[str, str] = {
         # vision tower
         "v.blk.": "vision_tower.vision_model.encoder.layers.",
@@ -34,7 +35,7 @@ def build_gemma3_mapper(is_multimodal: bool) -> WeightsMapper:
         "token_embd.": backbone_prefix + "embed_tokens.",
         "blk.": backbone_prefix + "layers.",
         "output_norm.": backbone_prefix + "norm.",
-        "output.": backbone_prefix + "lm_head.",
+        "output.": lm_head_prefix + "lm_head.",
     }
     orig_to_new_substr: dict[str, str] = {
         # vision tower
@@ -113,10 +114,9 @@ class Gemma3GGUFAdapter(BaseGGUFWeightsAdapter):
         """Transform raw GGUF weights to HF-style weights."""
         for name, weight in weights:
             if name.endswith("norm.weight"):
-                weight = weight + 1
+                weight = weight - 1
             elif name.startswith("vision_tower") and "mlp.up_proj." in name:
                 name = name.replace("mlp.up_proj.", "mlp.fc2.")
             elif name.startswith("vision_tower") and "mlp.down_proj." in name:
                 name = name.replace("mlp.down_proj.", "mlp.fc1.")
             yield name, weight
-
