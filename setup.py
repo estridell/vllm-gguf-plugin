@@ -9,12 +9,12 @@ setup(
         CUDAExtension(
             name="vllm_gguf_plugin._C_gguf",
             sources=[
-                "vllm_gguf_plugin/csrc/torch_bindings.cpp",
-                "vllm_gguf_plugin/csrc/gguf/gguf_kernel.cu",
+                "csrc/torch_bindings.cpp",
+                "csrc/gguf/gguf_kernel.cu",
             ],
             include_dirs=[
-                "vllm_gguf_plugin/csrc",
-                "vllm_gguf_plugin/csrc/gguf",
+                "csrc",
+                "csrc/gguf",
             ],
             extra_compile_args={
                 "cxx": ["-O3", "-std=c++17"],
