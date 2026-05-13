@@ -153,38 +153,20 @@ jobs:
           name: python-wheel-${{ matrix.cuda.torch_backend }}
           path: dist/*.whl
 
-  publish-pypi:
+  upload-github-release:
     needs: [build-sdist, build-wheel]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
-      id-token: write
-
-    environment:
-      name: pypi
 
     steps:
-      - name: Download source distribution
-        uses: actions/download-artifact@v4
-        with:
-          name: python-sdist
-          path: dist
-
       - name: Download source distribution for GitHub Release
         uses: actions/download-artifact@v4
         with:
           name: python-sdist
           path: release-dist
-
-      # Keep the CUDA 12.9 local-version wheel on GitHub Releases only; PyPI
-      # and TestPyPI accept upstream public versions, not local version labels.
-      - name: Download wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: python-wheel-cu130
-          path: dist
 
       - name: Download wheel artifacts for GitHub Release
         uses: actions/download-artifact@v4
@@ -198,17 +180,40 @@ jobs:
         with:
           files: release-dist/*
 
+  publish-pypi:
+    needs: [build-sdist, build-wheel]
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+
+    environment:
+      name: pypi
+
+    steps:
+      - name: Download source distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: dist
+
+      # Keep the CUDA 12.9 local-version wheel on GitHub Releases only; PyPI
+      # and TestPyPI accept upstream public versions, not local version labels.
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-cu130
+          path: dist
+
       - name: Publish package to PyPI
-        if: ${{ !github.event.release.prerelease }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
 
   publish-testpypi:
     needs: [build-sdist, build-wheel]
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'release' && github.event.release.prerelease)
+    if: github.event_name == 'release' && github.event.release.prerelease
     runs-on: ubuntu-latest
 
     permissions:
