@@ -104,6 +104,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          uv venv --python 3.11
           uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
           uv pip install --torch-backend cu129 "torch>=2.9"
 
@@ -151,6 +152,7 @@ jobs:
       
       - name: Install build dependencies
         run: |
+          uv venv --python 3.11
           uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
           uv pip install --torch-backend cu130 "torch>=2.9"
 
