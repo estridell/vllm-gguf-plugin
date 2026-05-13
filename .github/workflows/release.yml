@@ -80,41 +80,20 @@ jobs:
   build-wheel:
     name: Build wheel (${{ matrix.cuda.torch_backend }})
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        cuda:
-          - version: "12.9"
-            container_image: nvidia/cuda:12.9.1-devel-ubuntu20.04
-            torch_backend: cu129
-            platform_tag: manylinux_2_31_x86_64
-            local_version_suffix: +cu129
-          - version: "13.0"
-            container_image: nvidia/cuda:13.0.0-devel-ubuntu22.04
-            torch_backend: cu130
-            platform_tag: manylinux_2_35_x86_64
-            local_version_suffix: ""
 
-    # Build each wheel from a base image whose glibc floor matches the exported
-    # manylinux tag. The release build script still derives arch coverage from
-    # the local nvcc version.
+    # PyTorch's manylinux2_28 builder image: AlmaLinux 8 (glibc 2.28 floor)
+    # with CUDA 13.0 + Python at /opt/python/cpXY-cpXY/ preinstalled. Same
+    # base image vLLM publishes its x86_64 wheels from.
     container:
-      image: ${{ matrix.cuda.container_image }}
+      image: pytorch/manylinux2_28-builder:cuda13.0
 
     permissions:
       contents: read
 
     env:
-      DEBIAN_FRONTEND: noninteractive
-      VLLM_GGUF_PLUGIN_LOCAL_VERSION_SUFFIX: ${{ matrix.cuda.local_version_suffix }}
+      PYTHON_VERSION: "3.12"
 
     steps:
-      - name: Install base tooling
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git
-
       - name: Check out code
         uses: actions/checkout@v4
 
@@ -125,24 +104,26 @@ jobs:
 
       - name: Create build venv
         run: |
-          uv python install 3.11
-          uv venv /opt/build-venv --python 3.11
+          PYV_NODOT=${PYTHON_VERSION//./}
+          uv venv /opt/build-venv \
+            --python "/opt/python/cp${PYV_NODOT}-cp${PYV_NODOT}/bin/python${PYTHON_VERSION}"
           echo "/opt/build-venv/bin" >> "$GITHUB_PATH"
           echo "UV_PYTHON=/opt/build-venv/bin/python" >> "$GITHUB_ENV"
           echo "UV_PYTHON_DOWNLOADS=never" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
-          uv pip install "setuptools>=77.0.3,<81.0.0" build wheel twine
-          uv pip install --torch-backend "${{ matrix.cuda.torch_backend }}" "torch>=2.9"
+          uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
+          uv pip install --index-url https://download.pytorch.org/whl/cu130 \
+            "torch>=2.9"
 
       - name: Build wheel
         run: ./scripts/build_release_wheel.sh
 
-      - name: Retag wheel as ${{ matrix.cuda.platform_tag }}
+      - name: Retag wheel as manylinux_2_28_x86_64
         run: |
           cd dist
-          python -m wheel tags --remove --platform-tag "${{ matrix.cuda.platform_tag }}" ./*.whl
+          python -m wheel tags --remove --platform-tag manylinux_2_28_x86_64 ./*.whl
 
       - name: Check wheel metadata
         run: python -m twine check dist/*.whl
