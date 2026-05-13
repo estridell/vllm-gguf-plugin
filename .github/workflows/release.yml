@@ -102,6 +102,11 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh \
             | env UV_INSTALL_DIR=/usr/local/bin sh
 
+      - name: Install build dependencies
+        run: |
+          uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
+          uv pip install --torch-backend cu129 "torch>=2.9"
+
       - name: Build wheel
         run: ./scripts/build_release_wheel.sh
 
@@ -143,6 +148,11 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh \
             | env UV_INSTALL_DIR=/usr/local/bin sh
+      
+      - name: Install build dependencies
+        run: |
+          uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
+          uv pip install --torch-backend cu130 "torch>=2.9"
 
       - name: Build wheel
         run: ./scripts/build_release_wheel.sh
