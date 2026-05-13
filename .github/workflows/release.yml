@@ -33,7 +33,7 @@ jobs:
           import tomllib
 
           project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-          version = project["project"]["version"]
+          version = project["tool"]["vllm_gguf_plugin"]["base_version"]
           release_tag = os.environ["RELEASE_TAG"]
           normalized_tag = release_tag[1:] if release_tag.startswith("v") else release_tag
 
@@ -53,7 +53,8 @@ jobs:
           import tomllib
 
           project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-          print(f"Building TestPyPI sdist for version {project['project']['version']}")
+          version = project["tool"]["vllm_gguf_plugin"]["base_version"]
+          print(f"Building TestPyPI sdist for version {version}")
           PY
 
       - name: Install packaging tools
@@ -73,18 +74,35 @@ jobs:
 
   build-wheel:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda:
+          - version: "12.9"
+            wheel_suffix: cu129
+            container_image: nvidia/cuda:12.9.1-devel-ubuntu20.04
+            torch_index_url: https://download.pytorch.org/whl/cu129
+            platform_tag: manylinux_2_31_x86_64
+            local_version_suffix: +cu129
+          - version: "13.0"
+            wheel_suffix: cu130
+            container_image: nvidia/cuda:13.0.0-devel-ubuntu22.04
+            torch_index_url: https://download.pytorch.org/whl/cu130
+            platform_tag: manylinux_2_35_x86_64
+            local_version_suffix: ""
 
-    # CUDA 12.8 on Ubuntu 22.04 → glibc 2.35 floor (manylinux_2_35_x86_64) and
-    # arch coverage matching vLLM's CUDA 12.8 CMakeLists list. Bump the tag to
-    # roll the wheel forward to a newer CUDA / glibc.
+    # Build each wheel from a base image whose glibc floor matches the exported
+    # manylinux tag. The release build script still derives arch coverage from
+    # the local nvcc version.
     container:
-      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+      image: ${{ matrix.cuda.container_image }}
 
     permissions:
       contents: read
 
     env:
       DEBIAN_FRONTEND: noninteractive
+      VLLM_GGUF_PLUGIN_LOCAL_VERSION_SUFFIX: ${{ matrix.cuda.local_version_suffix }}
 
     steps:
       - name: Install base tooling
@@ -109,16 +127,16 @@ jobs:
       - name: Install build dependencies
         run: |
           uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
-          uv pip install --index-url https://download.pytorch.org/whl/cu128 \
+          uv pip install --index-url "${{ matrix.cuda.torch_index_url }}" \
             "torch>=2.9"
 
       - name: Build wheel
         run: ./scripts/build_release_wheel.sh
 
-      - name: Retag wheel as manylinux_2_35_x86_64
+      - name: Retag wheel as ${{ matrix.cuda.platform_tag }}
         run: |
           cd dist
-          python -m wheel tags --remove --platform-tag manylinux_2_35_x86_64 ./*.whl
+          python -m wheel tags --remove --platform-tag "${{ matrix.cuda.platform_tag }}" ./*.whl
 
       - name: Check wheel metadata
         run: python -m twine check dist/*.whl
@@ -126,7 +144,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-wheel
+          name: python-wheel-${{ matrix.cuda.wheel_suffix }}
           path: dist/*.whl
 
   publish-pypi:
@@ -148,16 +166,31 @@ jobs:
           name: python-sdist
           path: dist
 
+      - name: Download source distribution for GitHub Release
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: release-dist
+
+      # Keep the CUDA 12.9 local-version wheel on GitHub Releases only; PyPI
+      # and TestPyPI accept upstream public versions, not local version labels.
       - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: python-wheel
+          name: python-wheel-cu130
           path: dist
+
+      - name: Download wheel artifacts for GitHub Release
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheel-*
+          path: release-dist
+          merge-multiple: true
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: release-dist/*
 
       - name: Publish package to PyPI
         if: ${{ !github.event.release.prerelease }}
@@ -188,7 +221,7 @@ jobs:
       - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: python-wheel
+          name: python-wheel-cu130
           path: dist
 
       - name: Publish package to TestPyPI
