@@ -78,22 +78,20 @@ jobs:
           path: dist/*.tar.gz
 
   build-wheel:
-    name: Build wheel (${{ matrix.cuda.wheel_suffix }})
+    name: Build wheel (${{ matrix.cuda.torch_backend }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         cuda:
           - version: "12.9"
-            wheel_suffix: cu129
             container_image: nvidia/cuda:12.9.1-devel-ubuntu20.04
-            torch_index_url: https://download.pytorch.org/whl/cu129
+            torch_backend: cu129
             platform_tag: manylinux_2_31_x86_64
             local_version_suffix: +cu129
           - version: "13.0"
-            wheel_suffix: cu130
             container_image: nvidia/cuda:13.0.0-devel-ubuntu22.04
-            torch_index_url: https://download.pytorch.org/whl/cu130
+            torch_backend: cu130
             platform_tag: manylinux_2_35_x86_64
             local_version_suffix: ""
 
@@ -109,6 +107,8 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
       VLLM_GGUF_PLUGIN_LOCAL_VERSION_SUFFIX: ${{ matrix.cuda.local_version_suffix }}
+      UV_PYTHON: /opt/build-venv/bin/python
+      UV_PYTHON_DOWNLOADS: never
 
     steps:
       - name: Install base tooling
@@ -133,9 +133,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
-          uv pip install --index-url "${{ matrix.cuda.torch_index_url }}" \
-            "torch>=2.9"
+          uv pip install "setuptools>=77.0.3,<81.0.0" build wheel twine
+          uv pip install --torch-backend "${{ matrix.cuda.torch_backend }}" "torch>=2.9"
 
       - name: Build wheel
         run: ./scripts/build_release_wheel.sh
@@ -151,7 +150,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-wheel-${{ matrix.cuda.wheel_suffix }}
+          name: python-wheel-${{ matrix.cuda.torch_backend }}
           path: dist/*.whl
 
   publish-pypi:
