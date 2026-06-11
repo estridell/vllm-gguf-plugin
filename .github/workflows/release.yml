@@ -189,8 +189,117 @@ jobs:
           name: python-wheel-cu130
           path: dist/*.whl
 
+  build-wheel-cu129-aarch64:
+    name: Build wheel (cu129, aarch64)
+    runs-on: ubuntu-24.04-arm
+
+    # PyTorch's manylinux aarch64 builder image with CUDA 12.9.
+    container:
+      image: pytorch/manylinuxaarch64-builder:cuda12.9
+
+    permissions:
+      contents: read
+
+    env:
+      VLLM_GGUF_PLUGIN_LOCAL_VERSION_SUFFIX: +cu129
+      PYTHON_VERSION: "3.11"
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh \
+            | env UV_INSTALL_DIR=/usr/local/bin sh
+
+      - name: Create build venv
+        run: |
+          PYV_NODOT=${PYTHON_VERSION//./}
+          uv venv /opt/build-venv \
+            --python "/opt/python/cp${PYV_NODOT}-cp${PYV_NODOT}/bin/python${PYTHON_VERSION}"
+          echo "/opt/build-venv/bin" >> "$GITHUB_PATH"
+          echo "UV_PYTHON=/opt/build-venv/bin/python" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_DOWNLOADS=never" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
+          uv pip install --torch-backend cu129 "torch>=2.9"
+
+      - name: Build wheel
+        run: ./scripts/build_release_wheel.sh
+
+      - name: Retag wheel as manylinux_2_28_aarch64
+        run: |
+          cd dist
+          wheel tags --remove --platform-tag manylinux_2_28_aarch64 ./*.whl
+
+      - name: Check wheel metadata
+        run: python -m twine check dist/*.whl
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-cu129-aarch64
+          path: dist/*.whl
+
+  build-wheel-cu130-aarch64:
+    name: Build wheel (cu130, aarch64)
+    runs-on: ubuntu-24.04-arm
+
+    # PyTorch's manylinux aarch64 builder image with CUDA 13.0.
+    container:
+      image: pytorch/manylinuxaarch64-builder:cuda13.0
+
+    permissions:
+      contents: read
+
+    env:
+      PYTHON_VERSION: "3.11"
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh \
+            | env UV_INSTALL_DIR=/usr/local/bin sh
+
+      - name: Create build venv
+        run: |
+          PYV_NODOT=${PYTHON_VERSION//./}
+          uv venv /opt/build-venv \
+            --python "/opt/python/cp${PYV_NODOT}-cp${PYV_NODOT}/bin/python${PYTHON_VERSION}"
+          echo "/opt/build-venv/bin" >> "$GITHUB_PATH"
+          echo "UV_PYTHON=/opt/build-venv/bin/python" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_DOWNLOADS=never" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          uv pip install "setuptools>=77.0.3,<81.0.0" wheel twine
+          uv pip install --torch-backend cu130 "torch>=2.9"
+
+      - name: Build wheel
+        run: ./scripts/build_release_wheel.sh
+
+      - name: Retag wheel as manylinux_2_28_aarch64
+        run: |
+          cd dist
+          wheel tags --remove --platform-tag manylinux_2_28_aarch64 ./*.whl
+
+      - name: Check wheel metadata
+        run: python -m twine check dist/*.whl
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-cu130-aarch64
+          path: dist/*.whl
+
   upload-github-release:
-    needs: [build-sdist, build-wheel-cu129, build-wheel-cu130]
+    needs: [build-sdist, build-wheel-cu129, build-wheel-cu130, build-wheel-cu129-aarch64, build-wheel-cu130-aarch64]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
 
@@ -217,7 +326,7 @@ jobs:
           files: release-dist/*
 
   publish-pypi:
-    needs: [build-sdist, build-wheel-cu129, build-wheel-cu130]
+    needs: [build-sdist, build-wheel-cu129, build-wheel-cu130, build-wheel-cu129-aarch64, build-wheel-cu130-aarch64]
     if: github.event_name == 'release' && !github.event.release.prerelease
     runs-on: ubuntu-latest
 
@@ -236,10 +345,16 @@ jobs:
 
       # Keep the CUDA 12.9 local-version wheel on GitHub Releases only; PyPI
       # and TestPyPI accept upstream public versions, not local version labels.
-      - name: Download wheel
+      - name: Download wheel (x86_64)
         uses: actions/download-artifact@v4
         with:
           name: python-wheel-cu130
+          path: dist
+
+      - name: Download wheel (aarch64)
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-cu130-aarch64
           path: dist
 
       - name: Publish package to PyPI
@@ -248,7 +363,7 @@ jobs:
           packages-dir: dist
 
   publish-testpypi:
-    needs: [build-sdist, build-wheel-cu129, build-wheel-cu130]
+    needs: [build-sdist, build-wheel-cu129, build-wheel-cu130, build-wheel-cu129-aarch64, build-wheel-cu130-aarch64]
     if: github.event_name == 'release' && github.event.release.prerelease
     runs-on: ubuntu-latest
 
@@ -265,10 +380,16 @@ jobs:
           name: python-sdist
           path: dist
 
-      - name: Download wheel
+      - name: Download wheel (x86_64)
         uses: actions/download-artifact@v4
         with:
           name: python-wheel-cu130
+          path: dist
+
+      - name: Download wheel (aarch64)
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-cu130-aarch64
           path: dist
 
       - name: Publish package to TestPyPI
