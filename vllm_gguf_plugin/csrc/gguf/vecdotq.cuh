@@ -40,6 +40,12 @@ static __device__ __forceinline__ int get_int_from_uint8_aligned(const uint8_t *
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
 // MMVQ = mul_mat_vec_q, MMQ = mul_mat_q
 
+#define VDR_Q1_0_Q8_1_MMVQ 1
+#define VDR_Q1_0_Q8_1_MMQ  4
+
+#define VDR_Q2_0_Q8_1_MMVQ 1
+#define VDR_Q2_0_Q8_1_MMQ  4
+
 #define VDR_Q4_0_Q8_1_MMVQ 2
 #define VDR_Q4_0_Q8_1_MMQ  4
 
@@ -488,6 +494,56 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_impl_mmq(
 
     return d6 * sumf_d;
 #endif
+}
+
+static __device__ __forceinline__ float vec_dot_q1_0_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+
+    const block_q1_0 * bq1_0 = (const block_q1_0 *) vbq;
+    const int v = get_int_from_uint8(bq1_0->qs, iqs);
+
+    int sumi = 0;
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+        const int shift = j * 4;
+        const int bits4 = (v >> shift) & 0x0F;
+        const int vi = ((bits4 >> 0) & 1) << 0 |
+                       ((bits4 >> 1) & 1) << 8 |
+                       ((bits4 >> 2) & 1) << 16 |
+                       ((bits4 >> 3) & 1) << 24;
+        sumi = __dp4a(vi, get_int_from_int8_aligned(bq8_1[iqs].qs, j), sumi);
+    }
+
+    // quantize_q8_1 stores the sum of the pre-quantized activation values in
+    // ds.y. Q1_0's symbol is 2*bit - 1, so defer the -sum correction here.
+    const float2 ds8f = __half22float2(bq8_1[iqs].ds);
+    return __half2float(bq1_0->d) * (2.0f * sumi * ds8f.x - ds8f.y);
+}
+
+static __device__ __forceinline__ float vec_dot_q2_0_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+
+    const block_q2_0 * bq2_0 = (const block_q2_0 *) vbq;
+    const int v0 = get_int_from_uint8(bq2_0->qs, 2 * iqs + 0);
+    const int v1 = get_int_from_uint8(bq2_0->qs, 2 * iqs + 1);
+
+    int sumi = 0;
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+        const int packed = j < 4 ? v0 : v1;
+        const int shift = (j % 4) * 8;
+        const int codes = (packed >> shift) & 0xFF;
+        const int vi = ((codes >> 0) & 0x3) << 0 |
+                       ((codes >> 2) & 0x3) << 8 |
+                       ((codes >> 4) & 0x3) << 16 |
+                       ((codes >> 6) & 0x3) << 24;
+        sumi = __dp4a(vi, get_int_from_int8_aligned(bq8_1[iqs].qs, j), sumi);
+    }
+
+    // Q2_0's symbol is code - 1. ds.y is the pre-quantized activation sum,
+    // which supplies the exact deferred affine correction for this chunk.
+    const float2 ds8f = __half22float2(bq8_1[iqs].ds);
+    return __half2float(bq2_0->d) * (sumi * ds8f.x - ds8f.y);
 }
 
 static __device__ __forceinline__ float vec_dot_q4_0_q8_1(

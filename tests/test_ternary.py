@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 
+from vllm_gguf_plugin import ops
 from vllm_gguf_plugin.gguf_utils import is_valid_gguf_quant_type
 from vllm_gguf_plugin.quantization.linear import _fused_mul_mat_gguf
 from vllm_gguf_plugin.quantization.utils import DEQUANT_TYPES
@@ -95,12 +96,93 @@ def test_triton_dequant_matches_torch_reference(qtype, quantize, dequantize, dty
     assert torch.equal(output.cpu(), reference)
 
 
+@pytest.mark.parametrize(
+    ("qtype", "quantize", "dequantize"),
+    [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
+)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_cuda_dequant_matches_torch_reference_exactly(
+    qtype, quantize, dequantize, dtype
+):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA ternary dequantization requires CUDA")
+    assert ops._cuda_kernel_available("ggml_dequantize", int(qtype))
+    values = torch.randn((5, 512), generator=torch.Generator().manual_seed(31))
+    packed = quantize(values)
+    reference = dequantize(packed, values.shape).to(dtype)
+
+    output = ops.ggml_dequantize(
+        packed.cuda(), int(qtype), values.shape[0], values.shape[1], dtype
+    )
+    assert torch.equal(output.cpu(), reference)
+
+
+@pytest.mark.parametrize(
+    ("qtype", "quantize", "dequantize"),
+    [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
+)
+@pytest.mark.parametrize("rows,cols", [(3, 2048), (5, 5120), (7, 17408)])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_cuda_ternary_gemv_matches_fp32_reference(
+    qtype, quantize, dequantize, rows, cols, dtype
+):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA ternary GEMV requires CUDA")
+    assert ops._cuda_kernel_available("ggml_mul_mat_vec_a8", int(qtype))
+    generator = torch.Generator().manual_seed(rows * 100_000 + cols)
+    weight = torch.randn((rows, cols), generator=generator)
+    packed = quantize(weight)
+    x = (0.25 * torch.randn((1, cols), generator=generator)).to(dtype).cuda()
+
+    output = ops.ggml_mul_mat_vec_a8(packed.cuda(), x, int(qtype), rows)
+    reference = x.float() @ dequantize(packed, weight.shape).cuda().T
+    torch.testing.assert_close(output.float(), reference, rtol=1e-2, atol=1.0)
+
+
+def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA ternary GEMV requires CUDA")
+
+    # All-negative Q1_0 makes the integer dot term zero, so the result depends
+    # only on ds.y. The small values deliberately quantize to zero beside the
+    # outlier; using the sum of quantized activations would produce -127 rather
+    # than the pre-quantization sum near -189.
+    q1_weight = -torch.ones((1, 128), dtype=torch.float32)
+    q1_packed = quantize_q1_0(q1_weight).cuda()
+    q1_x = torch.full((1, 128), 0.49, dtype=torch.float16, device="cuda")
+    q1_x[0, 0] = 127.0
+    q1_output = ops.ggml_mul_mat_vec_a8(q1_packed, q1_x, int(Q1_0), 1)
+    q1_reference = (
+        q1_x.float() @ dequant_q1_0(q1_packed, q1_weight.shape).T
+    ).to(torch.float16)
+    assert torch.equal(q1_output, q1_reference)
+    assert q1_output.item() < -180.0
+
+    # One Q2_0 block with a distinct constant code in each consecutive
+    # 32-weight chunk proves iqs visits chunks 0,1,2,3 in order. Codes map to
+    # symbols -1,0,+1,+2 and activations are 1,2,3,4, so the dot is 320.
+    q2_packed = torch.empty((1, 34), dtype=torch.uint8)
+    q2_packed[0, :2] = torch.tensor([1.0], dtype=torch.float16).view(torch.uint8)
+    q2_packed[0, 2:10] = 0x00
+    q2_packed[0, 10:18] = 0x55
+    q2_packed[0, 18:26] = 0xAA
+    q2_packed[0, 26:34] = 0xFF
+    q2_x = torch.cat(
+        [torch.full((32,), value, dtype=torch.float16) for value in (1, 2, 3, 4)]
+    ).reshape(1, 128).cuda()
+    q2_output = ops.ggml_mul_mat_vec_a8(q2_packed.cuda(), q2_x, int(Q2_0), 1)
+    assert q2_output.item() == 320.0
+
+
 def test_dequant_fallback_gemm_uses_group_128_shape_math() -> None:
     if not torch.cuda.is_available():
         pytest.skip("Triton ternary kernels require CUDA")
     values = torch.randn((3, 256), generator=torch.Generator().manual_seed(12))
     packed = quantize_q2_0(values).cuda()
-    x = torch.randn((2, 256), device="cuda", dtype=torch.float16)
+    # The per-type MMVQ threshold is six rows; batch seven deliberately keeps
+    # this coverage on the dequantize-plus-GEMM fallback after ternary MMVQ was
+    # added.
+    x = torch.randn((7, 256), device="cuda", dtype=torch.float16)
 
     output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
     expected = x @ dequant_q2_0(packed, values.shape).to(torch.float16).T

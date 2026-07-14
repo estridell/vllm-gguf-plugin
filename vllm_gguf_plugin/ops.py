@@ -28,6 +28,8 @@ from .triton.gemm.utils import (
     GGML_TYPE_Q5_K,
     GGML_TYPE_Q6_K,
     GGML_TYPE_Q8_0,
+    GGML_TYPE_Q1_0,
+    GGML_TYPE_Q2_0,
 )
 
 try:
@@ -53,6 +55,8 @@ _CUDA_ENABLED = _USE_CUDA and _CUDA_AVAILABLE
 
 _CUDA_GEMV_QUANT_TYPES = frozenset(
     {
+        GGML_TYPE_Q1_0,
+        GGML_TYPE_Q2_0,
         GGML_TYPE_Q4_0,
         GGML_TYPE_Q4_1,
         GGML_TYPE_Q5_0,

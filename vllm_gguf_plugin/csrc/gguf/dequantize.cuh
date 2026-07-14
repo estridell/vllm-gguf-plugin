@@ -1,5 +1,27 @@
 // copied and adapted from https://github.com/ggerganov/llama.cpp/blob/b2899/ggml-cuda/convert.cu
 // Dequant functions
+static __device__ __forceinline__ void dequantize_q1_0(const void * vx, const int ib, const int iqs, dfloat2 & v){
+    const block_q1_0 * x = (const block_q1_0 *) vx;
+    const dfloat d = x[ib].d;
+
+    const int bit0 = (x[ib].qs[iqs / 8] >> (iqs % 8)) & 1;
+    const int bit1 = (x[ib].qs[(iqs + 1) / 8] >> ((iqs + 1) % 8)) & 1;
+
+    v.x = bit0 ? d : __hneg(d);
+    v.y = bit1 ? d : __hneg(d);
+}
+
+static __device__ __forceinline__ void dequantize_q2_0(const void * vx, const int ib, const int iqs, dfloat2 & v){
+    const block_q2_0 * x = (const block_q2_0 *) vx;
+    const dfloat d = x[ib].d;
+
+    const int code0 = (x[ib].qs[iqs / 4] >> (2 * (iqs % 4))) & 0x3;
+    const int code1 = (x[ib].qs[(iqs + 1) / 4] >> (2 * ((iqs + 1) % 4))) & 0x3;
+
+    v.x = __hmul(__int2half_rn(code0 - 1), d);
+    v.y = __hmul(__int2half_rn(code1 - 1), d);
+}
+
 static __device__ __forceinline__ void dequantize_q4_0(const void * vx, const int ib, const int iqs, dfloat2 & v){
     const block_q4_0 * x = (const block_q4_0 *) vx;
 
@@ -527,6 +549,10 @@ static void dequantize_row_iq4_xs_cuda(const void * vx, dst_t * y, const int64_t
 template<typename dst_t>
 static to_cuda_ggml_t<dst_t> ggml_get_to_cuda(int64_t type) {
     switch (type) {
+        case 41:
+            return dequantize_block_cuda<QK1_0, QR1_0, dequantize_q1_0>;
+        case 42:
+            return dequantize_block_cuda<QK2_0, QR2_0, dequantize_q2_0>;
         case 2:
             return dequantize_block_cuda<QK4_0, QR4_0, dequantize_q4_0>;
         case 3:
