@@ -9,7 +9,11 @@ description = "Out-of-tree GGUF quantization plugin for vLLM"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-dependencies = ["gguf>=0.17.0", "vllm", "torch>=2.9"]
+dependencies = [
+    "gguf @ git+https://github.com/PrismML-Eng/llama.cpp@prism#subdirectory=gguf-py",
+    "vllm",
+    "torch>=2.9",
+]
 
 [project.optional-dependencies]
 dev = ["pre-commit"]
