@@ -12,6 +12,7 @@ from vllm.model_executor.models.qwen3_5 import (
 from vllm.model_executor.models.utils import maybe_prefix
 
 from ..quantization.config import GGUFConfig
+from ..quantization.utils import is_layer_skipped_gguf
 
 
 class Qwen3_5ForCausalLM(_VllmQwen3_5ForCausalLM, IsHybrid):
@@ -21,13 +22,13 @@ class Qwen3_5ForCausalLM(_VllmQwen3_5ForCausalLM, IsHybrid):
         super().__init__(vllm_config=vllm_config, prefix=prefix)
 
         # vLLM's Qwen3_5Model currently omits quant_config when constructing
-        # embed_tokens.  Replace only the GGUF instance before weights load so
+        # embed_tokens. Replace quantized GGUF instances before weights load so
         # token_embd remains packed; ParallelLMHead already receives it.
         embedding_name = "model.embed_tokens"
         embedding_prefix = maybe_prefix(prefix, embedding_name)
-        if isinstance(self.quant_config, GGUFConfig) and (
-            embedding_name in self.quant_config.ternary_modules
-            or embedding_prefix in self.quant_config.ternary_modules
+        if isinstance(self.quant_config, GGUFConfig) and not is_layer_skipped_gguf(
+            embedding_prefix,
+            self.quant_config.unquantized_modules,
         ):
             embed_tokens = VocabParallelEmbedding(
                 self.config.vocab_size,

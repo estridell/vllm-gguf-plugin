@@ -248,6 +248,61 @@ def test_cuda_ternary_gemv_matches_fp32_reference(
     torch.testing.assert_close(output.float(), reference, rtol=1e-2, atol=1.0)
 
 
+@pytest.mark.parametrize(
+    ("qtype", "type_size"),
+    [(Q1_0, 18), (Q2_0, 34)],
+)
+def test_ternary_mmvq_fallback_dequantizes_then_multiplies(
+    monkeypatch, qtype, type_size
+) -> None:
+    rows, columns = 3, 256
+    packed = torch.zeros((rows, columns // 128 * type_size), dtype=torch.uint8)
+    x = torch.arange(2 * columns, dtype=torch.float32).reshape(2, columns)
+    weight = torch.arange(rows * columns, dtype=x.dtype).reshape(rows, columns)
+    calls = []
+
+    monkeypatch.setattr(ops, "_cuda_kernel_available", lambda *args: False)
+
+    def fake_dequantize(W, quant_type, m, n, dtype):
+        calls.append((W, quant_type, m, n, dtype))
+        return weight
+
+    def fail_gemm(*args, **kwargs):
+        raise AssertionError("ternary fallback must not enter Triton GEMM dispatch")
+
+    monkeypatch.setattr(ops, "ggml_dequantize_triton", fake_dequantize)
+    monkeypatch.setattr(ops, "ggml_mul_mat_a8_triton", fail_gemm)
+
+    output = ops.ggml_mul_mat_vec_a8(packed, x, int(qtype), rows)
+
+    assert calls == [(packed, int(qtype), rows, columns, x.dtype)]
+    assert torch.equal(output, x @ weight.T)
+
+
+@pytest.mark.parametrize(
+    ("qtype", "quantize", "dequantize"),
+    [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
+)
+@pytest.mark.parametrize("batch", [1, 8])
+@pytest.mark.cuda
+def test_triton_ternary_mmvq_fallback_matches_dequantized_matmul(
+    monkeypatch, qtype, quantize, dequantize, batch
+) -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("Triton ternary MMVQ fallback requires CUDA")
+    rows, columns = 7, 512
+    generator = torch.Generator().manual_seed(51)
+    values = torch.randn((rows, columns), generator=generator)
+    packed = quantize(values).cuda()
+    x = torch.randn((batch, columns), generator=generator).to(torch.float16).cuda()
+    monkeypatch.setattr(ops, "_cuda_kernel_available", lambda *args: False)
+
+    output = ops.ggml_mul_mat_vec_a8(packed, x, int(qtype), rows)
+    expected = x @ dequantize(packed, values.shape).to(torch.float16).T
+
+    torch.testing.assert_close(output, expected, atol=0, rtol=0)
+
+
 def test_large_dequant_fallback_chunks_output_rows(monkeypatch) -> None:
     rows = _DEQUANT_ROW_CHUNK_SIZE + 1
     block_size, type_size = gguf.GGML_QUANT_SIZES[Q2_0]

@@ -95,7 +95,7 @@ def test_qwen35_gguf_model_is_registered_as_hybrid() -> None:
     assert hasattr(model_class, "get_mamba_state_copy_func")
 
 
-def test_qwen35_gguf_model_replaces_unquantized_embedding(monkeypatch) -> None:
+def test_qwen35_gguf_model_replaces_any_quantized_embedding(monkeypatch) -> None:
     calls = []
 
     def fake_base_init(self, *, vllm_config, prefix=""):
@@ -118,19 +118,21 @@ def test_qwen35_gguf_model_replaces_unquantized_embedding(monkeypatch) -> None:
         hidden_size=5120,
         tie_word_embeddings=False,
     )
-    for ternary_module in (
-        "model.embed_tokens",
-        "language_model.model.embed_tokens",
+    for prefix, embedding_prefix in (
+        ("", "model.embed_tokens"),
+        ("language_model", "language_model.model.embed_tokens"),
     ):
-        quant_config = GGUFConfig()
-        quant_config.ternary_modules.add(ternary_module)
+        # Non-ternary packed types such as Q4_K are absent from both the
+        # unquantized and ternary module sets.
+        quant_config = GGUFConfig(unquantized_modules=["model.norm"])
+        assert not quant_config.ternary_modules
         vllm_config = SimpleNamespace(
             quant_config=quant_config,
             model_config=SimpleNamespace(hf_text_config=config),
         )
 
         model = qwen35_model_module.Qwen3_5ForCausalLM(
-            vllm_config=vllm_config, prefix="language_model"
+            vllm_config=vllm_config, prefix=prefix
         )
 
         assert model.model.embed_tokens == "packed-embedding"
@@ -138,22 +140,25 @@ def test_qwen35_gguf_model_replaces_unquantized_embedding(monkeypatch) -> None:
             (248320, 5120),
             {
                 "quant_config": vllm_config.quant_config,
-                "prefix": "language_model.model.embed_tokens",
+                "prefix": embedding_prefix,
             },
         )
 
-    kquant_config = GGUFConfig()
-    kquant_model = qwen35_model_module.Qwen3_5ForCausalLM(
+    unquantized_config = GGUFConfig(unquantized_modules=["model.embed_tokens"])
+    unquantized_model = qwen35_model_module.Qwen3_5ForCausalLM(
         vllm_config=SimpleNamespace(
-            quant_config=kquant_config,
+            quant_config=unquantized_config,
             model_config=SimpleNamespace(hf_text_config=config),
-        )
+        ),
+        prefix="language_model",
     )
-    assert kquant_model.model.embed_tokens != "packed-embedding"
+    assert unquantized_model.model.embed_tokens != "packed-embedding"
     assert len(calls) == 2
 
 
-def test_qwen35_load_spec_marks_only_ternary_modules(monkeypatch) -> None:
+def test_qwen35_load_spec_distinguishes_quantized_and_unquantized_modules(
+    monkeypatch,
+) -> None:
     adapter = Qwen35GGUFAdapter(_config())
     monkeypatch.setattr(adapter, "patch_hf_config", lambda path, config: config)
     monkeypatch.setattr(adapter, "build_name_map", lambda config: {})
@@ -162,8 +167,8 @@ def test_qwen35_load_spec_marks_only_ternary_modules(monkeypatch) -> None:
         adapter,
         "get_weight_type_map",
         lambda *args: {
-            "model.embed_tokens.weight": "Q2_0",
-            "lm_head.weight": "Q4_K",
+            "model.embed_tokens.weight": "Q4_K",
+            "lm_head.weight": "Q2_0",
             "model.norm.weight": "F32",
         },
     )
@@ -171,7 +176,7 @@ def test_qwen35_load_spec_marks_only_ternary_modules(monkeypatch) -> None:
 
     load_spec = adapter.prepare_loading("/tmp/model.gguf", model_config)
 
-    assert load_spec.ternary_modules == {"model.embed_tokens"}
+    assert load_spec.ternary_modules == {"lm_head"}
     assert load_spec.unquantized_modules == ["model.norm"]
 
 
