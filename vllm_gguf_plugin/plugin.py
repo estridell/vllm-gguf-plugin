@@ -16,7 +16,7 @@ from vllm.model_executor.model_loader import (
 from vllm.model_executor.models import ModelRegistry
 from vllm.transformers_utils.config import get_config_parser, register_config_parser
 
-from .config_parser import GGUFConfigParser
+from .config_parser import QWEN35_GGUF_ARCHITECTURE, GGUFConfigParser
 from .gguf_utils import check_gguf_file, is_gguf, is_remote_gguf, split_remote_gguf
 from .loader import GGUFModelLoader
 from .quantization import DiffusionGGUFConfig, GGUFConfig
@@ -109,7 +109,7 @@ def _register_omni_diffusion_quantization() -> None:
 
 def _register_qwen35_text_model() -> None:
     ModelRegistry.register_model(
-        "Qwen3_5ForCausalLM",
+        QWEN35_GGUF_ARCHITECTURE,
         "vllm_gguf_plugin.models.qwen3_5:Qwen3_5ForCausalLM",
     )
 

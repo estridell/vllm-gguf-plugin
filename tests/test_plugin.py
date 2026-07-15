@@ -21,7 +21,10 @@ from vllm.transformers_utils.config import get_config_parser
 import vllm_gguf_plugin.config_parser as gguf_config_parser_module
 import vllm_gguf_plugin.quantization as gguf_quantization
 from vllm_gguf_plugin import OOTGGUFConfig, OOTGGUFModelLoader, register
-from vllm_gguf_plugin.config_parser import GGUFConfigParser
+from vllm_gguf_plugin.config_parser import (
+    QWEN35_GGUF_ARCHITECTURE,
+    GGUFConfigParser,
+)
 from vllm_gguf_plugin.quantization import (
     GGUFUninitializedParameter,
     GGUFWeightParameter,
@@ -238,6 +241,23 @@ def test_gguf_config_parser_uses_parent_dir_for_local_file(tmp_path, monkeypatch
     assert calls["trust_remote_code"] is False
     assert config_dict["norm_topk_prob"] is True
     assert config.architectures == ["Qwen3MoeForCausalLM"]
+
+
+def test_gguf_config_parser_selects_qwen35_gguf_architecture(monkeypatch):
+    def fake_parse(
+        self, model, trust_remote_code, revision=None, code_revision=None, **kwargs
+    ):
+        return {}, PretrainedConfig(model_type="qwen3_5")
+
+    monkeypatch.setattr(gguf_config_parser_module.HFConfigParser, "parse", fake_parse)
+
+    config_dict, config = GGUFConfigParser().parse(
+        "prism-ml/Ternary-Bonsai-27B-gguf:Q2_0",
+        trust_remote_code=False,
+    )
+
+    assert config_dict["architectures"] == [QWEN35_GGUF_ARCHITECTURE]
+    assert config.architectures == [QWEN35_GGUF_ARCHITECTURE]
 
 
 def test_register_sets_engine_args_for_gguf_model(monkeypatch):

@@ -9,6 +9,7 @@ from vllm.model_executor.models.registry import ModelRegistry
 
 import vllm_gguf_plugin.models.qwen3_5 as qwen35_model_module
 from vllm_gguf_plugin import register
+from vllm_gguf_plugin.config_parser import QWEN35_GGUF_ARCHITECTURE
 from vllm_gguf_plugin.quantization.config import GGUFConfig
 from vllm_gguf_plugin.weights_adapter import (
     Qwen35GGUFAdapter,
@@ -71,9 +72,18 @@ def test_qwen35_composite_config_uses_text_model_for_name_map() -> None:
     assert all("vision" not in name for name in name_map.values())
 
 
-def test_qwen35_text_model_is_registered_as_hybrid() -> None:
+def test_qwen35_and_qwen36_non_gguf_registration_is_unchanged() -> None:
+    # Both families use the canonical Qwen3_5ForCausalLM architecture.
+    original_entry = ModelRegistry.models.get("Qwen3_5ForCausalLM")
+
     register()
-    entry = ModelRegistry.models["Qwen3_5ForCausalLM"]
+
+    assert ModelRegistry.models.get("Qwen3_5ForCausalLM") is original_entry
+
+
+def test_qwen35_gguf_model_is_registered_as_hybrid() -> None:
+    register()
+    entry = ModelRegistry.models[QWEN35_GGUF_ARCHITECTURE]
     info = entry.inspect_model_cls()
     model_class = entry.load_model_cls()
 

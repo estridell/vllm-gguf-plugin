@@ -15,6 +15,8 @@ from .gguf_utils import (
     split_remote_gguf,
 )
 
+QWEN35_GGUF_ARCHITECTURE = "Qwen3_5GGUFForCausalLM"
+
 
 class GGUFConfigParser(ConfigParserBase):
     def parse(
@@ -42,9 +44,13 @@ class GGUFConfigParser(ConfigParserBase):
         if config.model_type not in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES:
             raise RuntimeError(f"Can't get gguf config for {config.model_type}.")
 
-        model_type = MODEL_FOR_CAUSAL_LM_MAPPING_NAMES[config.model_type]
-        config_dict["architectures"] = [model_type]
-        config.update({"architectures": [model_type]})
+        architecture = MODEL_FOR_CAUSAL_LM_MAPPING_NAMES[config.model_type]
+        # Keep the canonical architecture untouched; this parser only runs for
+        # GGUF and can therefore select the plugin shim without global effects.
+        if architecture == "Qwen3_5ForCausalLM":
+            architecture = QWEN35_GGUF_ARCHITECTURE
+        config_dict["architectures"] = [architecture]
+        config.update({"architectures": [architecture]})
 
         if is_gguf(original_model):
             config = maybe_patch_hf_config_from_gguf(str(original_model), config)
