@@ -13,6 +13,7 @@ from vllm.model_executor.model_loader import (
     get_model_loader,
     register_model_loader,
 )
+from vllm.model_executor.models import ModelRegistry
 from vllm.transformers_utils.config import get_config_parser, register_config_parser
 
 from .config_parser import GGUFConfigParser
@@ -106,9 +107,17 @@ def _register_omni_diffusion_quantization() -> None:
     register_quantization_override("gguf", lambda **kw: DiffusionGGUFConfig(**kw))
 
 
+def _register_qwen35_text_model() -> None:
+    ModelRegistry.register_model(
+        "Qwen3_5ForCausalLM",
+        "vllm_gguf_plugin.models.qwen3_5:Qwen3_5ForCausalLM",
+    )
+
+
 def register() -> None:
     """Register the out-of-tree GGUF integration."""
     register_quantization_config("gguf")(GGUFConfig)
+    _register_qwen35_text_model()
     _register_omni_diffusion_quantization()
 
     if "gguf" not in _LOAD_FORMAT_TO_MODEL_LOADER or not isinstance(
