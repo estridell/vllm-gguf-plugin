@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import gguf
 import torch
-from transformers import Qwen3_5TextConfig
+from transformers import Qwen3_5Config, Qwen3_5TextConfig
 from vllm.model_executor.models.registry import ModelRegistry
 
 from vllm_gguf_plugin import register
@@ -53,6 +53,22 @@ def test_qwen35_name_map_covers_meta_model() -> None:
     assert name_map["blk.3.attn_q.weight"].endswith("self_attn.q_proj.weight")
 
 
+def test_qwen35_composite_config_uses_text_model_for_name_map() -> None:
+    config = Qwen3_5Config(
+        architectures=["Qwen3_5ForCausalLM"],
+        text_config=_config(),
+    )
+    adapter = get_weights_adapter(config)
+    assert isinstance(adapter, Qwen35GGUFAdapter)
+
+    model_config = SimpleNamespace(hf_config=config, trust_remote_code=False)
+    name_map = adapter.build_name_map(model_config)
+
+    assert len(name_map) == 56
+    assert len(set(name_map.values())) == 56
+    assert all("vision" not in name for name in name_map.values())
+
+
 def test_qwen35_text_model_is_registered_as_hybrid() -> None:
     register()
     entry = ModelRegistry.models["Qwen3_5ForCausalLM"]
@@ -62,6 +78,9 @@ def test_qwen35_text_model_is_registered_as_hybrid() -> None:
     assert info.is_text_generation_model
     assert info.is_hybrid
     assert model_class.__module__ == "vllm_gguf_plugin.models.qwen3_5"
+    assert hasattr(model_class, "get_mamba_state_dtype_from_config")
+    assert hasattr(model_class, "get_mamba_state_shape_from_config")
+    assert hasattr(model_class, "get_mamba_state_copy_func")
 
 
 def test_qwen35_undoes_tiled_v_head_rows() -> None:

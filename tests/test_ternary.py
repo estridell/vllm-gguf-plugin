@@ -8,7 +8,10 @@ import torch
 
 from vllm_gguf_plugin import ops
 from vllm_gguf_plugin.gguf_utils import is_valid_gguf_quant_type
-from vllm_gguf_plugin.quantization.linear import _fused_mul_mat_gguf
+from vllm_gguf_plugin.quantization.linear import (
+    _DEQUANT_ROW_CHUNK_SIZE,
+    _fused_mul_mat_gguf,
+)
 from vllm_gguf_plugin.quantization.utils import DEQUANT_TYPES
 from vllm_gguf_plugin.reference.ternary import (
     dequant_q1_0,
@@ -137,6 +140,30 @@ def test_cuda_ternary_gemv_matches_fp32_reference(
     output = ops.ggml_mul_mat_vec_a8(packed.cuda(), x, int(qtype), rows)
     reference = x.float() @ dequantize(packed, weight.shape).cuda().T
     torch.testing.assert_close(output.float(), reference, rtol=1e-2, atol=1.0)
+
+
+def test_large_dequant_fallback_chunks_output_rows(monkeypatch) -> None:
+    rows = _DEQUANT_ROW_CHUNK_SIZE + 1
+    block_size, type_size = gguf.GGML_QUANT_SIZES[Q2_0]
+    qweight = torch.zeros((rows, type_size), dtype=torch.uint8)
+    x = torch.ones((7, block_size), dtype=torch.float32)
+    dequant_rows = []
+
+    def fake_dequantize(weight, quant_type, m, n, dtype):
+        assert quant_type == int(Q2_0)
+        assert m == weight.shape[0]
+        assert n == block_size
+        assert dtype == x.dtype
+        dequant_rows.append(m)
+        return torch.ones((m, n), dtype=dtype)
+
+    monkeypatch.setattr(ops, "ggml_dequantize", fake_dequantize)
+
+    output = _fused_mul_mat_gguf(x, qweight, int(Q2_0))
+
+    assert dequant_rows == [_DEQUANT_ROW_CHUNK_SIZE, 1]
+    assert output.shape == (7, rows)
+    assert torch.all(output == block_size)
 
 
 def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:

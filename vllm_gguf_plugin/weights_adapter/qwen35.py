@@ -26,6 +26,13 @@ class Qwen35GGUFAdapter(GGUFWeightsAdapter):
         del config
         return "qwen35"
 
+    def get_name_map_config(self, config):
+        # Transformers canonicalizes a standalone qwen3_5_text config into a
+        # composite Qwen3_5Config on newer releases. Its default vision_config
+        # does not mean that a text-only GGUF contains a vision tower, and using
+        # the composite config here would create the wrong reference model.
+        return config.get_text_config()
+
     def get_explicit_name_map(self, config) -> dict[str, str]:
         text_config = config.get_text_config()
         result: dict[str, str] = {}

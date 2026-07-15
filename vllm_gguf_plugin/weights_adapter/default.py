@@ -51,8 +51,12 @@ class GGUFWeightsAdapter(BaseGGUFWeightsAdapter):
         del config
         return {}
 
+    def get_name_map_config(self, config: PretrainedConfig) -> PretrainedConfig:
+        """Return the config used to construct the name-map reference model."""
+        return config
+
     def build_name_map(self, model_config: ModelConfig) -> dict[str, str]:
-        config = model_config.hf_config
+        config = self.get_name_map_config(model_config.hf_config)
         text_config = config.get_text_config()
         model_type = self.get_gguf_model_type(config)
         is_multimodal = (
