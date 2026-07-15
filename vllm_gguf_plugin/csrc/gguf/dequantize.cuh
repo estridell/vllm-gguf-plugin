@@ -1,4 +1,9 @@
-// copied and adapted from https://github.com/ggerganov/llama.cpp/blob/b2899/ggml-cuda/convert.cu
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2023-2026 The ggml authors
+//
+// Derived from llama.cpp b2899. Q1_0/Q2_0 dequantization is adapted from
+// PrismML-Eng/llama.cpp at 62061f91088281e65071cc38c5f69ee95c39f14e:
+// https://github.com/PrismML-Eng/llama.cpp/blob/62061f91088281e65071cc38c5f69ee95c39f14e/ggml/src/ggml-cuda/dequantize.cuh
 // Dequant functions
 static __device__ __forceinline__ void dequantize_q1_0(const void * vx, const int ib, const int iqs, dfloat2 & v){
     const block_q1_0 * x = (const block_q1_0 *) vx;

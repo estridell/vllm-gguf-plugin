@@ -1,4 +1,9 @@
-// copied from https://github.com/ggerganov/llama.cpp/blob/b2899/ggml-common.h
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2023-2026 The ggml authors
+//
+// Derived from llama.cpp b2899. Q1_0/Q2_0 definitions are adapted from
+// PrismML-Eng/llama.cpp at 62061f91088281e65071cc38c5f69ee95c39f14e:
+// https://github.com/PrismML-Eng/llama.cpp/blob/62061f91088281e65071cc38c5f69ee95c39f14e/ggml/src/ggml-common.h
 #define QK_K 256
 #define K_QUANTS_PER_ITERATION 2
 #define WARP_SIZE_GGUF 32

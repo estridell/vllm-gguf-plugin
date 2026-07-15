@@ -1,5 +1,9 @@
-// copied and adapted from https://github.com/ggerganov/llama.cpp/blob/b2899/ggml-cuda/vecdotq.cuh
-// and https://github.com/ggerganov/llama.cpp/blob/b2899/ggml-cuda/mmq.cu
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2023-2026 The ggml authors
+//
+// Derived from llama.cpp b2899. Q1_0/Q2_0 dot products are adapted from
+// PrismML-Eng/llama.cpp at 62061f91088281e65071cc38c5f69ee95c39f14e:
+// https://github.com/PrismML-Eng/llama.cpp/blob/62061f91088281e65071cc38c5f69ee95c39f14e/ggml/src/ggml-cuda/vecdotq.cuh
 static __device__ __forceinline__ int get_int_b2(const void * x, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) x; // assume at least 2 byte alignment
 
