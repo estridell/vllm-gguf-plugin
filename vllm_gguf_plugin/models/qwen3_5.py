@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch
-
 from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from vllm.model_executor.models.interfaces import IsHybrid
 from vllm.model_executor.models.qwen3_5 import (
-    Qwen3_5ForConditionalGeneration as _VllmQwen3_5ForConditionalGeneration,
     Qwen3_5ForCausalLM as _VllmQwen3_5ForCausalLM,
+)
+from vllm.model_executor.models.qwen3_5 import (
+    Qwen3_5ForConditionalGeneration as _VllmQwen3_5ForConditionalGeneration,
 )
 from vllm.model_executor.models.utils import maybe_prefix
 
