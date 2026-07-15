@@ -263,7 +263,7 @@ def test_large_dequant_fallback_chunks_output_rows(monkeypatch) -> None:
     rows = _DEQUANT_ROW_CHUNK_SIZE + 1
     block_size, type_size = gguf.GGML_QUANT_SIZES[Q2_0]
     qweight = torch.zeros((rows, type_size), dtype=torch.uint8)
-    x = torch.ones((7, block_size), dtype=torch.float32)
+    x = torch.ones((9, block_size), dtype=torch.float32)
     dequant_rows = []
 
     def fake_dequantize(weight, quant_type, m, n, dtype):
@@ -279,7 +279,7 @@ def test_large_dequant_fallback_chunks_output_rows(monkeypatch) -> None:
     output = _fused_mul_mat_gguf(x, qweight, int(Q2_0))
 
     assert dequant_rows == [_DEQUANT_ROW_CHUNK_SIZE, 1]
-    assert output.shape == (7, rows)
+    assert output.shape == (9, rows)
     assert torch.all(output == block_size)
 
 
@@ -323,14 +323,26 @@ def test_dequant_fallback_gemm_uses_group_128_shape_math() -> None:
         pytest.skip("Triton ternary kernels require CUDA")
     values = torch.randn((3, 256), generator=torch.Generator().manual_seed(12))
     packed = quantize_q2_0(values).cuda()
-    # The per-type MMVQ threshold is six rows; batch seven deliberately keeps
-    # this coverage on the dequantize-plus-GEMM fallback after ternary MMVQ was
-    # added.
-    x = torch.randn((7, 256), device="cuda", dtype=torch.float16)
+    # The ternary MMVQ threshold is eight rows; batch nine deliberately keeps
+    # this coverage on the dequantize-plus-GEMM fallback.
+    x = torch.randn((9, 256), device="cuda", dtype=torch.float16)
 
     output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
     expected = x @ dequant_q2_0(packed, values.shape).to(torch.float16).T
     torch.testing.assert_close(output, expected, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("batch", [3, 4, 8])
+def test_ternary_mmvq_covers_decode_batches(batch: int) -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA ternary GEMV requires CUDA")
+    values = torch.randn((512, 640), generator=torch.Generator().manual_seed(21))
+    packed = quantize_q2_0(values).cuda()
+    x = torch.randn((batch, 640), device="cuda", dtype=torch.float16)
+
+    output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
+    expected = x @ dequant_q2_0(packed, values.shape).cuda().to(torch.float16).T
+    torch.testing.assert_close(output, expected, rtol=1e-2, atol=1.0)
 
 
 def test_mini_gguf_q2_0_recognized_by_reader_and_weight_iterator(tmp_path) -> None:
