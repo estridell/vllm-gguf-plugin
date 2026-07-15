@@ -327,7 +327,7 @@ def test_dequant_fallback_gemm_uses_group_128_shape_math() -> None:
     torch.testing.assert_close(output, expected, atol=0, rtol=0)
 
 
-@pytest.mark.parametrize("batch", [3, 4, 8])
+@pytest.mark.parametrize("batch", [1, 2, 3, 4, 8])
 @pytest.mark.cuda
 def test_ternary_mmvq_covers_decode_batches(batch: int) -> None:
     if not torch.cuda.is_available():
