@@ -42,15 +42,28 @@ class GGUFWeightsAdapter(BaseGGUFWeightsAdapter):
     def patch_hf_config(self, model_path: str, hf_config: PretrainedConfig):
         return maybe_patch_hf_config_from_gguf(model_path, hf_config)
 
+    def get_gguf_model_type(self, config: PretrainedConfig) -> str:
+        """Return the GGUF architecture name corresponding to *config*."""
+        return config.model_type
+
+    def get_explicit_name_map(self, config: PretrainedConfig) -> dict[str, str]:
+        """Return mappings that cannot be represented by GGUF's name map."""
+        del config
+        return {}
+
+    def get_name_map_config(self, config: PretrainedConfig) -> PretrainedConfig:
+        """Return the config used to construct the name-map reference model."""
+        return config
+
     def build_name_map(self, model_config: ModelConfig) -> dict[str, str]:
-        config = model_config.hf_config
+        config = self.get_name_map_config(model_config.hf_config)
         text_config = config.get_text_config()
-        model_type = config.model_type
+        model_type = self.get_gguf_model_type(config)
         is_multimodal = (
             hasattr(config, "vision_config") and config.vision_config is not None
         )
 
-        gguf_to_hf_name_map: dict[str, str] = {}
+        gguf_to_hf_name_map = self.get_explicit_name_map(config)
         sideload_params: list[re.Pattern] = []
 
         if model_type == "cohere":
@@ -210,11 +223,13 @@ class GGUFWeightsAdapter(BaseGGUFWeightsAdapter):
 
         unmapped_params = []
         for hf_name in state_dict:
+            if hf_name in gguf_to_hf_name_map.values():
+                continue
             gguf_name_with_suffix = find_hf_name_in_tensor_map(hf_name)
             if gguf_name_with_suffix is not None:
                 gguf_to_hf_name_map[gguf_name_with_suffix] = hf_name
                 logger.debug("Mapped GGUF %s → HF %s", gguf_name_with_suffix, hf_name)
-            elif hf_name not in gguf_to_hf_name_map.values():
+            else:
                 unmapped_params.append(hf_name)
 
         if unmapped_params:
@@ -316,6 +331,11 @@ class GGUFWeightsAdapter(BaseGGUFWeightsAdapter):
             weights_source=self._get_all_gguf_files(model_path),
             gguf_to_hf_name_map=gguf_to_hf_name_map,
             unquantized_modules=self.get_unquantized_modules(weight_type_map),
+            ternary_modules={
+                name.removesuffix(".weight")
+                for name, weight_type in weight_type_map.items()
+                if weight_type in ("Q1_0", "Q2_0") and name.endswith(".weight")
+            },
         )
         return self.load_spec
 

@@ -27,14 +27,22 @@ from .utils import (
     IMATRIX_QUANT_TYPES,
     MMQ_QUANT_TYPES,
     MMVQ_QUANT_TYPES,
+    TERNARY_QUANT_TYPES,
     UNQUANTIZED_TYPES,
 )
+
+_DEQUANT_ROW_CHUNK_SIZE = 32768
 
 
 def _fused_mul_mat_gguf(
     x: torch.Tensor, qweight: torch.Tensor, qweight_type: int
 ) -> torch.Tensor:
-    if qweight_type in IMATRIX_QUANT_TYPES:
+    if qweight_type in TERNARY_QUANT_TYPES:
+        # Benchmarks on 27B-shaped layers put the sm_75 crossover near batch
+        # 16. Keep the cutoff at the highest validated batch (8), leaving
+        # margin for other layer shapes and devices.
+        mmvq_safe = 8
+    elif qweight_type in IMATRIX_QUANT_TYPES:
         mmvq_safe = 8 if qweight.shape[0] > 5120 else 16
     else:
         mmvq_safe = 2 if qweight.shape[0] > 5120 else 6
@@ -49,8 +57,19 @@ def _fused_mul_mat_gguf(
     elif qweight_type in DEQUANT_TYPES:
         block_size, type_size = gguf.GGML_QUANT_SIZES[qweight_type]
         shape = (qweight.shape[0], qweight.shape[1] // type_size * block_size)
-        weight = ops.ggml_dequantize(qweight, qweight_type, *shape, x.dtype)
-        y = x @ weight.T
+        if shape[0] > _DEQUANT_ROW_CHUNK_SIZE:
+            outputs = []
+            for qweight_chunk in qweight.split(_DEQUANT_ROW_CHUNK_SIZE, dim=0):
+                chunk_shape = (qweight_chunk.shape[0], shape[1])
+                weight = ops.ggml_dequantize(
+                    qweight_chunk, qweight_type, *chunk_shape, x.dtype
+                )
+                outputs.append(x @ weight.T)
+                del weight
+            y = torch.cat(outputs, dim=-1)
+        else:
+            weight = ops.ggml_dequantize(qweight, qweight_type, *shape, x.dtype)
+            y = x @ weight.T
     else:
         qweight_type = WeightType(qweight_type)
         raise NotImplementedError(f"Unsupported GGUF quantization type: {qweight_type}")

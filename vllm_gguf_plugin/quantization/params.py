@@ -39,8 +39,12 @@ def _resolve_gguf_weight_type_loader(
         return fallback_weight_loader
 
     def _gguf_weight_type_loader_v2(param, loaded_weight, loaded_shard_id=None):
-        if loaded_shard_id is None and hasattr(param, "_store"):
-            param._store(loaded_weight)
+        if hasattr(param, "_store"):
+            if isinstance(loaded_shard_id, tuple):
+                for shard_id in loaded_shard_id:
+                    param._store(loaded_weight, shard_id)
+            else:
+                param._store(loaded_weight, loaded_shard_id)
             return
         base_loader(param, loaded_weight, loaded_shard_id)
 
@@ -347,7 +351,12 @@ def _materialize_gguf_weight_parameter(
         output_dim=raw_param.output_dim,
         tensor_shape=raw_param.tensor_shape,
     )
-    qweight.data_container = list(raw_param.data_container)
+    # Transfer ownership of loaded shards instead of copying the list.  The
+    # uninitialized parameter can otherwise keep every pre-padding shard alive
+    # until cyclic GC runs, duplicating a large fraction of the packed model on
+    # the GPU after the final padded parameter has been assembled.
+    qweight.data_container = raw_param.data_container
+    raw_param.data_container = []
     qweight.shard_id = list(raw_param.shard_id)
     qweight.shard_id_map = dict(raw_param.shard_id_map)
     if hasattr(raw_param, "ignore_warning"):

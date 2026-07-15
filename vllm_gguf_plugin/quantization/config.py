@@ -32,6 +32,7 @@ class GGUFConfig(QuantizationConfig):
     def __init__(self, unquantized_modules: list[str] | None = None) -> None:
         super().__init__()
         self.unquantized_modules = unquantized_modules or []
+        self.ternary_modules: set[str] = set()
 
     def __repr__(self) -> str:
         return "GGUFConfig()"

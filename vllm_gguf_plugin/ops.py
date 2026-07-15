@@ -9,6 +9,8 @@ from .triton.fused_moe.interface import ggml_moe_a8_triton
 from .triton.fused_moe.utils import get_triton_moe_block_m
 from .triton.gemm.interface import ggml_mul_mat_a8_triton
 from .triton.gemm.utils import (
+    BLOCK_BYTES_BY_TYPE,
+    BLOCK_QK_BY_TYPE,
     GGML_TYPE_IQ1_M,
     GGML_TYPE_IQ1_S,
     GGML_TYPE_IQ2_S,
@@ -18,6 +20,8 @@ from .triton.gemm.utils import (
     GGML_TYPE_IQ3_XXS,
     GGML_TYPE_IQ4_NL,
     GGML_TYPE_IQ4_XS,
+    GGML_TYPE_Q1_0,
+    GGML_TYPE_Q2_0,
     GGML_TYPE_Q2_K,
     GGML_TYPE_Q3_K,
     GGML_TYPE_Q4_0,
@@ -53,6 +57,8 @@ _CUDA_ENABLED = _USE_CUDA and _CUDA_AVAILABLE
 
 _CUDA_GEMV_QUANT_TYPES = frozenset(
     {
+        GGML_TYPE_Q1_0,
+        GGML_TYPE_Q2_0,
         GGML_TYPE_Q4_0,
         GGML_TYPE_Q4_1,
         GGML_TYPE_Q5_0,
@@ -88,6 +94,7 @@ _CUDA_GEMM_QUANT_TYPES = frozenset(
         GGML_TYPE_Q6_K,
     }
 )
+_TERNARY_QUANT_TYPES = frozenset({GGML_TYPE_Q1_0, GGML_TYPE_Q2_0})
 
 
 def _cuda_kernel_available(op_name: str, quant_type: int | None = None) -> bool:
@@ -194,6 +201,24 @@ def ggml_mul_mat_vec_a8(
 ) -> torch.Tensor:
     if _cuda_kernel_available("ggml_mul_mat_vec_a8", quant_type):
         return torch.ops._C_gguf.ggml_mul_mat_vec_a8(W, X, quant_type, row)
+    quant_type = int(quant_type)
+    if quant_type in _TERNARY_QUANT_TYPES:
+        row = int(row)
+        if row <= 0 or W.numel() % row:
+            raise ValueError(
+                f"Quantized weight with {W.numel()} bytes cannot be split into "
+                f"{row} rows"
+            )
+        packed_row_size = W.numel() // row
+        type_size = BLOCK_BYTES_BY_TYPE[quant_type]
+        if packed_row_size % type_size:
+            raise ValueError(
+                f"Quantized row has {packed_row_size} bytes, which is not divisible "
+                f"by the {type_size}-byte block size for quant type {quant_type}"
+            )
+        columns = packed_row_size // type_size * BLOCK_QK_BY_TYPE[quant_type]
+        weight = ggml_dequantize_triton(W, quant_type, row, columns, X.dtype)
+        return X @ weight.T
     return ggml_mul_mat_a8_triton(W, X, quant_type, row)
 
 

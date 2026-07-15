@@ -9,7 +9,11 @@ description = "Out-of-tree GGUF quantization plugin for vLLM"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-dependencies = ["gguf>=0.17.0", "vllm", "torch>=2.9"]
+dependencies = [
+    "gguf @ git+https://github.com/PrismML-Eng/llama.cpp@62061f91088281e65071cc38c5f69ee95c39f14e#subdirectory=gguf-py",
+    "vllm>=0.25.1",
+    "torch>=2.9",
+]
 
 [project.optional-dependencies]
 dev = ["pre-commit"]
@@ -77,5 +81,8 @@ iy = "iy"
 
 [tool.pytest.ini_options]
 markers = [
+    "cpu: marks tests that run without an accelerator",
+    "cuda: marks tests that require a CUDA device",
+    "integration: marks tests that require external model assets",
     "slow: marks tests as slow (large model downloads, requires GPU)",
 ]

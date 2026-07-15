@@ -21,7 +21,10 @@ from vllm.transformers_utils.config import get_config_parser
 import vllm_gguf_plugin.config_parser as gguf_config_parser_module
 import vllm_gguf_plugin.quantization as gguf_quantization
 from vllm_gguf_plugin import OOTGGUFConfig, OOTGGUFModelLoader, register
-from vllm_gguf_plugin.config_parser import GGUFConfigParser
+from vllm_gguf_plugin.config_parser import (
+    QWEN35_GGUF_ARCHITECTURE,
+    GGUFConfigParser,
+)
 from vllm_gguf_plugin.quantization import (
     GGUFUninitializedParameter,
     GGUFWeightParameter,
@@ -108,6 +111,30 @@ def test_gguf_linear_uses_weight_loader_v2(monkeypatch):
     assert isinstance(layer.qweight_type, GGUFWeightTypeParameter)
     assert layer.qweight.shard_id == [0, 1]
     assert layer.qweight_type.shard_weight_type == {0: 3, 1: 4}
+
+
+def test_gguf_weight_type_loader_expands_fused_shard_tuple(monkeypatch):
+    register()
+    monkeypatch.setattr(parameter_module, "get_tensor_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(
+        parameter_module, "get_tensor_model_parallel_world_size", lambda: 1
+    )
+    quant_config = OOTGGUFConfig.from_config({})
+    layer = MergedColumnParallelLinear(
+        input_size=4,
+        output_sizes=[4, 4, 4],
+        bias=False,
+        quant_config=quant_config,
+        disable_tp=True,
+    )
+
+    layer.qweight_type.weight_loader(
+        layer.qweight_type,
+        torch.tensor(3, dtype=torch.uint8),
+        (0, 1, 2),
+    )
+
+    assert layer.qweight_type.shard_weight_type == {0: 3, 1: 3, 2: 3}
 
 
 def test_gguf_embedding_uses_plugin_weight_loader(monkeypatch):
@@ -214,6 +241,23 @@ def test_gguf_config_parser_uses_parent_dir_for_local_file(tmp_path, monkeypatch
     assert calls["trust_remote_code"] is False
     assert config_dict["norm_topk_prob"] is True
     assert config.architectures == ["Qwen3MoeForCausalLM"]
+
+
+def test_gguf_config_parser_selects_qwen35_gguf_architecture(monkeypatch):
+    def fake_parse(
+        self, model, trust_remote_code, revision=None, code_revision=None, **kwargs
+    ):
+        return {}, PretrainedConfig(model_type="qwen3_5")
+
+    monkeypatch.setattr(gguf_config_parser_module.HFConfigParser, "parse", fake_parse)
+
+    config_dict, config = GGUFConfigParser().parse(
+        "prism-ml/Ternary-Bonsai-27B-gguf:Q2_0",
+        trust_remote_code=False,
+    )
+
+    assert config_dict["architectures"] == [QWEN35_GGUF_ARCHITECTURE]
+    assert config.architectures == [QWEN35_GGUF_ARCHITECTURE]
 
 
 def test_register_sets_engine_args_for_gguf_model(monkeypatch):
