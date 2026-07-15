@@ -1,14 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from vllm.model_executor.models.interfaces import IsHybrid
 from vllm.model_executor.models.qwen3_5 import (
     Qwen3_5ForConditionalGeneration as _VllmQwen3_5ForConditionalGeneration,
     Qwen3_5ForCausalLM as _VllmQwen3_5ForCausalLM,
 )
+from vllm.model_executor.models.utils import maybe_prefix
+
+from ..quantization.config import GGUFConfig
 
 
 class Qwen3_5ForCausalLM(_VllmQwen3_5ForCausalLM, IsHybrid):
     """Expose vLLM's shipped text-only Qwen3.5 class as a hybrid model."""
+
+    def __init__(self, *, vllm_config, prefix: str = ""):
+        super().__init__(vllm_config=vllm_config, prefix=prefix)
+
+        # vLLM's Qwen3_5Model currently omits quant_config when constructing
+        # embed_tokens.  Replace only the GGUF instance before weights load so
+        # token_embd remains packed; ParallelLMHead already receives it.
+        embedding_prefix = maybe_prefix(prefix, "model.embed_tokens")
+        if (
+            isinstance(self.quant_config, GGUFConfig)
+            and embedding_prefix in self.quant_config.ternary_modules
+        ):
+            embed_tokens = VocabParallelEmbedding(
+                self.config.vocab_size,
+                self.config.hidden_size,
+                quant_config=self.quant_config,
+                prefix=embedding_prefix,
+            )
+            self.model.embed_tokens = embed_tokens
+            if self.config.tie_word_embeddings:
+                self.lm_head = embed_tokens
 
     @classmethod
     def get_mamba_state_dtype_from_config(cls, vllm_config):

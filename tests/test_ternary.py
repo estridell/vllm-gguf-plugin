@@ -1,3 +1,5 @@
+import gc
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -5,13 +7,19 @@ import gguf
 import numpy as np
 import pytest
 import torch
+import vllm.model_executor.layers.vocab_parallel_embedding as vocab_embedding_module
+import vllm.model_executor.parameter as parameter_module
+from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 
 from vllm_gguf_plugin import ops
 from vllm_gguf_plugin.gguf_utils import is_valid_gguf_quant_type
+from vllm_gguf_plugin.quantization.config import GGUFConfig
 from vllm_gguf_plugin.quantization.linear import (
     _DEQUANT_ROW_CHUNK_SIZE,
     _fused_mul_mat_gguf,
+    GGUFLinearMethod,
 )
+from vllm_gguf_plugin.quantization.vocal_embeds import _apply_gguf_embedding
 from vllm_gguf_plugin.quantization.utils import DEQUANT_TYPES
 from vllm_gguf_plugin.reference.ternary import (
     dequant_q1_0,
@@ -28,6 +36,8 @@ from vllm_gguf_plugin.weight_utils import (
 Q1_0 = gguf.GGMLQuantizationType.Q1_0
 Q2_0 = gguf.GGMLQuantizationType.Q2_0
 BONSAI_MODEL = Path("/home/stridell/bonsai/models/Ternary-Bonsai-1.7B-Q2_0.gguf")
+BONSAI_4B_MODEL = Path("/home/stridell/bonsai/models/Ternary-Bonsai-4B-Q2_0.gguf")
+BONSAI_4B_CONFIG = Path("/home/stridell/bonsai/models/bonsai-4b")
 
 
 @pytest.mark.parametrize("shape", [(128,), (3, 256), (2, 3, 128)])
@@ -118,6 +128,113 @@ def test_cuda_dequant_matches_torch_reference_exactly(
         packed.cuda(), int(qtype), values.shape[0], values.shape[1], dtype
     )
     assert torch.equal(output.cpu(), reference)
+
+
+@pytest.mark.parametrize(
+    ("qtype", "quantize", "dequantize"),
+    [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
+)
+def test_ternary_embedding_gathers_packed_rows_then_dequantizes_exactly(
+    qtype, quantize, dequantize
+) -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA ternary embedding lookup requires CUDA")
+    values = torch.randn((11, 256), generator=torch.Generator().manual_seed(41))
+    packed = quantize(values)
+    indices = torch.tensor([[7, 1, 7], [0, 10, 3]], device="cuda")
+
+    output = _apply_gguf_embedding(
+        indices,
+        packed.cuda(),
+        int(qtype),
+        values.shape[1],
+        torch.float16,
+    )
+    reference = dequantize(packed, values.shape).index_select(
+        0, indices.cpu().flatten()
+    )
+    reference = reference.view(*indices.shape, values.shape[1]).to(torch.float16)
+
+    assert torch.equal(output.cpu(), reference)
+
+
+def test_ternary_parallel_lm_head_stays_packed_and_uses_linear_apply(
+    monkeypatch,
+) -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA ternary lm_head requires CUDA")
+    monkeypatch.setattr(
+        vocab_embedding_module, "get_tensor_model_parallel_rank", lambda: 0
+    )
+    monkeypatch.setattr(
+        vocab_embedding_module, "get_tensor_model_parallel_world_size", lambda: 1
+    )
+    monkeypatch.setattr(parameter_module, "get_tensor_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(
+        parameter_module, "get_tensor_model_parallel_world_size", lambda: 1
+    )
+    values = torch.randn((7, 256), generator=torch.Generator().manual_seed(43))
+    packed = quantize_q2_0(values)
+
+    with torch.device("cuda"):
+        layer = ParallelLMHead(
+            num_embeddings=7,
+            embedding_dim=256,
+            org_num_embeddings=7,
+            padding_size=1,
+            params_dtype=torch.float16,
+            quant_config=GGUFConfig(),
+        )
+    layer.qweight.weight_loader(layer.qweight, packed)
+    layer.qweight_type.weight_loader(
+        layer.qweight_type, torch.tensor(int(Q2_0), dtype=torch.uint8)
+    )
+    layer.quant_method.process_weights_after_loading(layer)
+
+    assert layer.qweight.dtype == torch.uint8
+    assert layer.qweight.shape == packed.shape
+    assert type(layer.quant_method).apply is GGUFLinearMethod.apply
+    x = torch.randn((1, 256), device="cuda", dtype=torch.float16)
+    output = layer.quant_method.apply(layer, x)
+    reference = x.float() @ dequant_q2_0(packed, values.shape).cuda().T
+    torch.testing.assert_close(output.float(), reference, rtol=1e-2, atol=1.0)
+
+
+def test_bonsai_4b_llm_weight_load_stays_within_packed_budget() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("Bonsai 4B memory assertion requires CUDA")
+    assert BONSAI_4B_MODEL.is_file(), f"Missing test model: {BONSAI_4B_MODEL}"
+    assert BONSAI_4B_CONFIG.is_dir(), f"Missing model config: {BONSAI_4B_CONFIG}"
+    os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
+    os.environ.pop("VLLM_GGUF_USE_CUDA", None)
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    from vllm import LLM
+
+    llm = LLM(
+        model=str(BONSAI_4B_MODEL),
+        tokenizer="Qwen/Qwen3-4B",
+        hf_config_path=str(BONSAI_4B_CONFIG),
+        enforce_eager=True,
+        gpu_memory_utilization=0.8,
+        max_model_len=2048,
+        dtype="half",
+        seed=0,
+    )
+    try:
+        runner = llm.llm_engine.model_executor.driver_worker.worker.model_runner
+        expected_packed_bytes = sum(
+            module.qweight.numel()
+            for module in runner.model.modules()
+            if hasattr(module, "qweight")
+            and hasattr(module, "qweight_type")
+            and int(module.qweight_type.weight_type) in (int(Q1_0), int(Q2_0))
+        )
+        assert expected_packed_bytes > 0
+        assert runner.model_memory_usage < expected_packed_bytes * 1.15
+    finally:
+        llm.llm_engine.engine_core.shutdown()
 
 
 @pytest.mark.parametrize(

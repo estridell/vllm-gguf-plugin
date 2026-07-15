@@ -331,6 +331,11 @@ class GGUFWeightsAdapter(BaseGGUFWeightsAdapter):
             weights_source=self._get_all_gguf_files(model_path),
             gguf_to_hf_name_map=gguf_to_hf_name_map,
             unquantized_modules=self.get_unquantized_modules(weight_type_map),
+            ternary_modules={
+                name.removesuffix(".weight")
+                for name, weight_type in weight_type_map.items()
+                if weight_type in ("Q1_0", "Q2_0") and name.endswith(".weight")
+            },
         )
         return self.load_spec
 
