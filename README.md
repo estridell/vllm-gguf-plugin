@@ -80,6 +80,9 @@ The equivalent environment variables are `VLLM_GGUF_TEST_TERNARY_MODEL`,
 `VLLM_GGUF_TEST_TERNARY_4B_MODEL`, and
 `VLLM_GGUF_TEST_TERNARY_4B_CONFIG`.
 
+The tested and compile-only ternary backend matrix, dispatch rules, and known
+gaps are recorded in [docs/ternary-backend-support.md](docs/ternary-backend-support.md).
+
 ## Usage
 
 ```bash

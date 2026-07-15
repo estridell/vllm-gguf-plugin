@@ -38,9 +38,8 @@ def _fused_mul_mat_gguf(
     x: torch.Tensor, qweight: torch.Tensor, qweight_type: int
 ) -> torch.Tensor:
     if qweight_type in TERNARY_QUANT_TYPES:
-        # Benchmarks on 27B-shaped layers put the sm_75 crossover near batch
-        # 16. Keep the cutoff at the highest validated batch (8), leaving
-        # margin for other layer shapes and devices.
+        # Keep MMVQ at the highest correctness-tested batch. Batch 9 and above
+        # use dequantize-plus-matmul; crossover evidence is architecture-specific.
         mmvq_safe = 8
     elif qweight_type in IMATRIX_QUANT_TYPES:
         mmvq_safe = 8 if qweight.shape[0] > 5120 else 16

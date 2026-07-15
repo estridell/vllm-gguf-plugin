@@ -279,14 +279,85 @@ def test_ternary_mmvq_fallback_dequantizes_then_multiplies(
     assert torch.equal(output, x @ weight.T)
 
 
+def test_compiled_ternary_kernel_is_disabled_on_rocm(monkeypatch) -> None:
+    class FakeOps:
+        ggml_dequantize = object()
+
+    monkeypatch.setattr(ops, "_CUDA_ENABLED", True)
+    monkeypatch.setattr(ops, "_IS_ROCM", True)
+    monkeypatch.setattr(torch.ops, "_C_gguf", FakeOps(), raising=False)
+
+    assert not ops._cuda_kernel_available("ggml_dequantize", int(Q1_0))
+    assert not ops._cuda_kernel_available("ggml_dequantize", int(Q2_0))
+
+
+@pytest.mark.parametrize("batch", [1, 2, 3, 4, 8])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_ternary_batches_through_eight_select_mmvq(
+    monkeypatch, batch: int, dtype: torch.dtype
+) -> None:
+    rows, columns = 3, 128
+    packed = torch.zeros((rows, 34), dtype=torch.uint8)
+    x = torch.zeros((batch, columns), dtype=dtype)
+    expected = torch.zeros((batch, rows), dtype=dtype)
+    calls = []
+
+    def fake_mmvq(W, X, quant_type, row):
+        calls.append((W, X, quant_type, row))
+        return expected
+
+    monkeypatch.setattr(ops, "ggml_mul_mat_vec_a8", fake_mmvq)
+    monkeypatch.setattr(
+        ops,
+        "ggml_dequantize",
+        lambda *args: pytest.fail("batch <= 8 must not select fallback GEMM"),
+    )
+
+    output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
+
+    assert calls == [(packed, x, int(Q2_0), rows)]
+    assert output is expected
+
+
+@pytest.mark.parametrize("batch", [9, 16])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_ternary_batches_above_eight_select_fallback_gemm(
+    monkeypatch, batch: int, dtype: torch.dtype
+) -> None:
+    rows, columns = 3, 128
+    packed = torch.zeros((rows, 34), dtype=torch.uint8)
+    x = torch.zeros((batch, columns), dtype=dtype)
+    weight = torch.zeros((rows, columns), dtype=dtype)
+    calls = []
+
+    monkeypatch.setattr(
+        ops,
+        "ggml_mul_mat_vec_a8",
+        lambda *args: pytest.fail("batch > 8 must not select MMVQ"),
+    )
+
+    def fake_dequantize(W, quant_type, m, n, output_dtype):
+        calls.append((W, quant_type, m, n, output_dtype))
+        return weight
+
+    monkeypatch.setattr(ops, "ggml_dequantize", fake_dequantize)
+
+    output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
+
+    assert calls == [(packed, int(Q2_0), rows, columns, dtype)]
+    assert output.shape == (batch, rows)
+    assert output.dtype is dtype
+
+
 @pytest.mark.parametrize(
     ("qtype", "quantize", "dequantize"),
     [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
 )
 @pytest.mark.parametrize("batch", [1, 8])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.cuda
 def test_triton_ternary_mmvq_fallback_matches_dequantized_matmul(
-    monkeypatch, qtype, quantize, dequantize, batch
+    monkeypatch, qtype, quantize, dequantize, batch, dtype
 ) -> None:
     if not torch.cuda.is_available():
         pytest.skip("Triton ternary MMVQ fallback requires CUDA")
@@ -294,11 +365,11 @@ def test_triton_ternary_mmvq_fallback_matches_dequantized_matmul(
     generator = torch.Generator().manual_seed(51)
     values = torch.randn((rows, columns), generator=generator)
     packed = quantize(values).cuda()
-    x = torch.randn((batch, columns), generator=generator).to(torch.float16).cuda()
+    x = torch.randn((batch, columns), generator=generator).to(dtype).cuda()
     monkeypatch.setattr(ops, "_cuda_kernel_available", lambda *args: False)
 
     output = ops.ggml_mul_mat_vec_a8(packed, x, int(qtype), rows)
-    expected = x @ dequantize(packed, values.shape).to(torch.float16).T
+    expected = x @ dequantize(packed, values.shape).to(dtype).T
 
     torch.testing.assert_close(output, expected, atol=0, rtol=0)
 
@@ -367,35 +438,47 @@ def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:
     assert q2_output.item() == 320.0
 
 
+@pytest.mark.parametrize(
+    ("qtype", "quantize", "dequantize"),
+    [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
+)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.cuda
-def test_dequant_fallback_gemm_uses_group_128_shape_math() -> None:
+def test_dequant_fallback_gemm_uses_group_128_shape_math(
+    qtype, quantize, dequantize, dtype: torch.dtype
+) -> None:
     if not torch.cuda.is_available():
         pytest.skip("Triton ternary kernels require CUDA")
     values = torch.randn((3, 256), generator=torch.Generator().manual_seed(12))
-    packed = quantize_q2_0(values).cuda()
+    packed = quantize(values).cuda()
     # The ternary MMVQ threshold is eight rows; batch nine deliberately keeps
     # this coverage on the dequantize-plus-GEMM fallback.
-    x = torch.randn((9, 256), device="cuda", dtype=torch.float16)
+    x = torch.randn((9, 256), device="cuda", dtype=dtype)
 
-    output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
-    expected = x @ dequant_q2_0(packed, values.shape).to(torch.float16).T
+    output = _fused_mul_mat_gguf(x, packed, int(qtype))
+    expected = x @ dequantize(packed, values.shape).to(dtype).T
     torch.testing.assert_close(output, expected, atol=0, rtol=0)
 
 
+@pytest.mark.parametrize(
+    ("qtype", "quantize", "dequantize"),
+    [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
+)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("batch", [1, 2, 3, 4, 8])
 @pytest.mark.cuda
-def test_ternary_mmvq_covers_decode_batches(batch: int) -> None:
+def test_ternary_mmvq_covers_decode_batches(
+    qtype, quantize, dequantize, dtype: torch.dtype, batch: int
+) -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA ternary GEMV requires CUDA")
     values = torch.randn((512, 640), generator=torch.Generator().manual_seed(21))
-    packed = quantize_q2_0(values).cuda()
+    packed = quantize(values).cuda()
     generator = torch.Generator(device="cuda").manual_seed(22)
-    x = torch.randn(
-        (batch, 640), generator=generator, device="cuda", dtype=torch.float16
-    )
+    x = torch.randn((batch, 640), generator=generator, device="cuda", dtype=dtype)
 
-    output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
-    expected = x @ dequant_q2_0(packed, values.shape).cuda().to(torch.float16).T
+    output = _fused_mul_mat_gguf(x, packed, int(qtype))
+    expected = x @ dequantize(packed, values.shape).cuda().to(dtype).T
     torch.testing.assert_close(output, expected, rtol=1e-2, atol=1.0)
 
 
