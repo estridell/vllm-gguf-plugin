@@ -11,7 +11,7 @@ license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
     "gguf @ git+https://github.com/PrismML-Eng/llama.cpp@prism#subdirectory=gguf-py",
-    "vllm",
+    "vllm>=0.25.1",
     "torch>=2.9",
 ]
 
@@ -81,6 +81,7 @@ iy = "iy"
 
 [tool.pytest.ini_options]
 markers = [
+    "cpu: marks tests that run without an accelerator",
     "cuda: marks tests that require a CUDA device",
     "integration: marks tests that require external model assets",
     "slow: marks tests as slow (large model downloads, requires GPU)",
