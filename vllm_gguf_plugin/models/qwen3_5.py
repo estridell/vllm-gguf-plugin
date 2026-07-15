@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import torch
+
 from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from vllm.model_executor.models.interfaces import IsHybrid
 from vllm.model_executor.models.qwen3_5 import (
@@ -34,6 +36,19 @@ class Qwen3_5ForCausalLM(_VllmQwen3_5ForCausalLM, IsHybrid):
             self.model.embed_tokens = embed_tokens
             if self.config.tie_word_embeddings:
                 self.lm_head = embed_tokens
+
+    # Qwen3.5/3.6 use M-RoPE position encoding (rope dimension sections) even
+    # for text-only inputs; vLLM asserts supports_mrope on the model class.
+    supports_mrope = True
+
+    def get_mrope_input_positions(self, input_tokens, mm_features):
+        if mm_features:
+            raise ValueError(
+                "This text-only GGUF Qwen3.5/3.6 model cannot take multimodal inputs"
+            )
+        num_tokens = len(input_tokens)
+        llm_positions = torch.arange(num_tokens).unsqueeze(0).expand(3, -1)
+        return llm_positions, 0
 
     @classmethod
     def get_mamba_state_dtype_from_config(cls, vllm_config):
