@@ -334,7 +334,10 @@ def test_ternary_mmvq_covers_decode_batches(batch: int) -> None:
         pytest.skip("CUDA ternary GEMV requires CUDA")
     values = torch.randn((512, 640), generator=torch.Generator().manual_seed(21))
     packed = quantize_q2_0(values).cuda()
-    x = torch.randn((batch, 640), device="cuda", dtype=torch.float16)
+    generator = torch.Generator(device="cuda").manual_seed(22)
+    x = torch.randn(
+        (batch, 640), generator=generator, device="cuda", dtype=torch.float16
+    )
 
     output = _fused_mul_mat_gguf(x, packed, int(Q2_0))
     expected = x @ dequant_q2_0(packed, values.shape).cuda().to(torch.float16).T
