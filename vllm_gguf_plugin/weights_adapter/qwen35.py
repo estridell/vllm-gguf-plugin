@@ -17,7 +17,10 @@ class Qwen35GGUFAdapter(GGUFWeightsAdapter):
 
     @classmethod
     def matches(cls, config) -> bool:
-        return config.model_type == "qwen3_5_text"
+        if config.model_type in ("qwen3_5", "qwen3_5_text"):
+            return True
+        text_config = getattr(config, "get_text_config", lambda: config)()
+        return getattr(text_config, "model_type", None) == "qwen3_5_text"
 
     def get_gguf_model_type(self, config) -> str:
         del config
