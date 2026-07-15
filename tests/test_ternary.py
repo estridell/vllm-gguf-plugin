@@ -117,6 +117,7 @@ def test_q1_0_uses_mean_absolute_scale_and_nonnegative_sign_bit() -> None:
     [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
 )
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+@pytest.mark.cuda
 def test_triton_dequant_matches_torch_reference(qtype, quantize, dequantize, dtype):
     if not torch.cuda.is_available():
         pytest.skip("Triton ternary kernels require CUDA")
@@ -135,6 +136,7 @@ def test_triton_dequant_matches_torch_reference(qtype, quantize, dequantize, dty
     [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
 )
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+@pytest.mark.cuda
 def test_cuda_dequant_matches_torch_reference_exactly(
     qtype, quantize, dequantize, dtype
 ):
@@ -155,6 +157,7 @@ def test_cuda_dequant_matches_torch_reference_exactly(
     ("qtype", "quantize", "dequantize"),
     [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
 )
+@pytest.mark.cuda
 def test_ternary_embedding_gathers_packed_rows_then_dequantizes_exactly(
     qtype, quantize, dequantize
 ) -> None:
@@ -179,6 +182,7 @@ def test_ternary_embedding_gathers_packed_rows_then_dequantizes_exactly(
     assert torch.equal(output.cpu(), reference)
 
 
+@pytest.mark.cuda
 def test_ternary_parallel_lm_head_stays_packed_and_uses_linear_apply(
     monkeypatch,
 ) -> None:
@@ -227,6 +231,7 @@ def test_ternary_parallel_lm_head_stays_packed_and_uses_linear_apply(
 )
 @pytest.mark.parametrize("rows,cols", [(3, 2048), (5, 5120), (7, 17408)])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.cuda
 def test_cuda_ternary_gemv_matches_fp32_reference(
     qtype, quantize, dequantize, rows, cols, dtype
 ):
@@ -267,6 +272,7 @@ def test_large_dequant_fallback_chunks_output_rows(monkeypatch) -> None:
     assert torch.all(output == block_size)
 
 
+@pytest.mark.cuda
 def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA ternary GEMV requires CUDA")
@@ -306,6 +312,7 @@ def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:
     assert q2_output.item() == 320.0
 
 
+@pytest.mark.cuda
 def test_dequant_fallback_gemm_uses_group_128_shape_math() -> None:
     if not torch.cuda.is_available():
         pytest.skip("Triton ternary kernels require CUDA")
@@ -321,6 +328,7 @@ def test_dequant_fallback_gemm_uses_group_128_shape_math() -> None:
 
 
 @pytest.mark.parametrize("batch", [3, 4, 8])
+@pytest.mark.cuda
 def test_ternary_mmvq_covers_decode_batches(batch: int) -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA ternary GEMV requires CUDA")

@@ -81,6 +81,7 @@ iy = "iy"
 
 [tool.pytest.ini_options]
 markers = [
+    "cuda: marks tests that require a CUDA device",
     "integration: marks tests that require external model assets",
     "slow: marks tests as slow (large model downloads, requires GPU)",
 ]

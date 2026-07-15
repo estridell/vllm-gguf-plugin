@@ -40,6 +40,7 @@ def test_bonsai_tensor_types_are_all_recognized(ternary_model_path: Path) -> Non
     not torch.cuda.is_available(),
     reason="Bonsai 4B memory assertion requires CUDA",
 )
+@pytest.mark.cuda
 def test_bonsai_4b_llm_weight_load_stays_within_packed_budget(
     ternary_4b_model_path: Path,
     ternary_4b_config_path: Path,
