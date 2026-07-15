@@ -118,27 +118,29 @@ def test_qwen35_gguf_model_replaces_unquantized_embedding(monkeypatch) -> None:
         hidden_size=5120,
         tie_word_embeddings=False,
     )
-    quant_config = GGUFConfig()
-    quant_config.ternary_modules.add("language_model.model.embed_tokens")
-    vllm_config = SimpleNamespace(
-        quant_config=quant_config,
-        model_config=SimpleNamespace(hf_text_config=config),
-    )
+    for ternary_module in (
+        "model.embed_tokens",
+        "language_model.model.embed_tokens",
+    ):
+        quant_config = GGUFConfig()
+        quant_config.ternary_modules.add(ternary_module)
+        vllm_config = SimpleNamespace(
+            quant_config=quant_config,
+            model_config=SimpleNamespace(hf_text_config=config),
+        )
 
-    model = qwen35_model_module.Qwen3_5ForCausalLM(
-        vllm_config=vllm_config, prefix="language_model"
-    )
+        model = qwen35_model_module.Qwen3_5ForCausalLM(
+            vllm_config=vllm_config, prefix="language_model"
+        )
 
-    assert model.model.embed_tokens == "packed-embedding"
-    assert calls == [
-        (
+        assert model.model.embed_tokens == "packed-embedding"
+        assert calls[-1] == (
             (248320, 5120),
             {
                 "quant_config": vllm_config.quant_config,
                 "prefix": "language_model.model.embed_tokens",
             },
         )
-    ]
 
     kquant_config = GGUFConfig()
     kquant_model = qwen35_model_module.Qwen3_5ForCausalLM(
@@ -148,7 +150,7 @@ def test_qwen35_gguf_model_replaces_unquantized_embedding(monkeypatch) -> None:
         )
     )
     assert kquant_model.model.embed_tokens != "packed-embedding"
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
 def test_qwen35_load_spec_marks_only_ternary_modules(monkeypatch) -> None:

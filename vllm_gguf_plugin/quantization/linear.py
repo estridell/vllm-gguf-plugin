@@ -38,9 +38,9 @@ def _fused_mul_mat_gguf(
     x: torch.Tensor, qweight: torch.Tensor, qweight_type: int
 ) -> torch.Tensor:
     if qweight_type in TERNARY_QUANT_TYPES:
-        # Group-128 ternary blocks are ~2.1 bpw, so MMVQ's per-vector weight
-        # refetch stays cheaper than a full dequant+GEMM until batch ~16
-        # (measured on 27B-shaped layers; crossover at 16 on sm_75).
+        # Benchmarks on 27B-shaped layers put the sm_75 crossover near batch
+        # 16. Keep the cutoff at the highest validated batch (8), leaving
+        # margin for other layer shapes and devices.
         mmvq_safe = 8
     elif qweight_type in IMATRIX_QUANT_TYPES:
         mmvq_safe = 8 if qweight.shape[0] > 5120 else 16

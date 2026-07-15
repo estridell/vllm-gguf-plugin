@@ -23,10 +23,11 @@ class Qwen3_5ForCausalLM(_VllmQwen3_5ForCausalLM, IsHybrid):
         # vLLM's Qwen3_5Model currently omits quant_config when constructing
         # embed_tokens.  Replace only the GGUF instance before weights load so
         # token_embd remains packed; ParallelLMHead already receives it.
-        embedding_prefix = maybe_prefix(prefix, "model.embed_tokens")
-        if (
-            isinstance(self.quant_config, GGUFConfig)
-            and embedding_prefix in self.quant_config.ternary_modules
+        embedding_name = "model.embed_tokens"
+        embedding_prefix = maybe_prefix(prefix, embedding_name)
+        if isinstance(self.quant_config, GGUFConfig) and (
+            embedding_name in self.quant_config.ternary_modules
+            or embedding_prefix in self.quant_config.ternary_modules
         ):
             embed_tokens = VocabParallelEmbedding(
                 self.config.vocab_size,
