@@ -62,6 +62,11 @@ class Qwen35GGUFAdapter(GGUFWeightsAdapter):
         shape = list(tensor.shape)
         if dim < 0:
             dim += len(shape)
+        if self._num_k_heads <= 0 or self._num_v_heads % self._num_k_heads != 0:
+            raise ValueError(
+                "Expected linear_num_value_heads to be a positive multiple of "
+                f"linear_num_key_heads, got {self._num_v_heads} and {self._num_k_heads}"
+            )
         num_v_per_k = self._num_v_heads // self._num_k_heads
         expected = self._num_v_heads * head_dim
         if shape[dim] != expected:
