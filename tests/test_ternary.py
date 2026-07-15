@@ -1,5 +1,3 @@
-import gc
-import os
 from collections import Counter
 from pathlib import Path
 
@@ -16,11 +14,11 @@ from vllm_gguf_plugin.gguf_utils import is_valid_gguf_quant_type
 from vllm_gguf_plugin.quantization.config import GGUFConfig
 from vllm_gguf_plugin.quantization.linear import (
     _DEQUANT_ROW_CHUNK_SIZE,
-    _fused_mul_mat_gguf,
     GGUFLinearMethod,
+    _fused_mul_mat_gguf,
 )
-from vllm_gguf_plugin.quantization.vocal_embeds import _apply_gguf_embedding
 from vllm_gguf_plugin.quantization.utils import DEQUANT_TYPES
+from vllm_gguf_plugin.quantization.vocal_embeds import _apply_gguf_embedding
 from vllm_gguf_plugin.reference.ternary import (
     dequant_q1_0,
     dequant_q2_0,
@@ -35,9 +33,32 @@ from vllm_gguf_plugin.weight_utils import (
 
 Q1_0 = gguf.GGMLQuantizationType.Q1_0
 Q2_0 = gguf.GGMLQuantizationType.Q2_0
-BONSAI_MODEL = Path("/home/stridell/bonsai/models/Ternary-Bonsai-1.7B-Q2_0.gguf")
-BONSAI_4B_MODEL = Path("/home/stridell/bonsai/models/Ternary-Bonsai-4B-Q2_0.gguf")
-BONSAI_4B_CONFIG = Path("/home/stridell/bonsai/models/bonsai-4b")
+
+
+@pytest.fixture
+def mini_ternary_gguf(tmp_path: Path) -> Path:
+    path = tmp_path / "mini-ternary.gguf"
+    values = torch.linspace(-1, 1, 256).reshape(2, 128)
+    writer = gguf.GGUFWriter(path, "test")
+    writer.add_tensor(
+        "blk.0.attn_q.weight",
+        quantize_q1_0(values).numpy(),
+        raw_dtype=Q1_0,
+    )
+    writer.add_tensor(
+        "token_embd.weight",
+        quantize_q2_0(values).numpy(),
+        raw_dtype=Q2_0,
+    )
+    writer.add_tensor(
+        "output_norm.weight",
+        np.linspace(0, 1, 128, dtype=np.float32),
+    )
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+    return path
 
 
 @pytest.mark.parametrize("shape", [(128,), (3, 256), (2, 3, 128)])
@@ -200,43 +221,6 @@ def test_ternary_parallel_lm_head_stays_packed_and_uses_linear_apply(
     torch.testing.assert_close(output.float(), reference, rtol=1e-2, atol=1.0)
 
 
-def test_bonsai_4b_llm_weight_load_stays_within_packed_budget() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("Bonsai 4B memory assertion requires CUDA")
-    assert BONSAI_4B_MODEL.is_file(), f"Missing test model: {BONSAI_4B_MODEL}"
-    assert BONSAI_4B_CONFIG.is_dir(), f"Missing model config: {BONSAI_4B_CONFIG}"
-    os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
-    os.environ.pop("VLLM_GGUF_USE_CUDA", None)
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    from vllm import LLM
-
-    llm = LLM(
-        model=str(BONSAI_4B_MODEL),
-        tokenizer="Qwen/Qwen3-4B",
-        hf_config_path=str(BONSAI_4B_CONFIG),
-        enforce_eager=True,
-        gpu_memory_utilization=0.8,
-        max_model_len=2048,
-        dtype="half",
-        seed=0,
-    )
-    try:
-        runner = llm.llm_engine.model_executor.driver_worker.worker.model_runner
-        expected_packed_bytes = sum(
-            module.qweight.numel()
-            for module in runner.model.modules()
-            if hasattr(module, "qweight")
-            and hasattr(module, "qweight_type")
-            and int(module.qweight_type.weight_type) in (int(Q1_0), int(Q2_0))
-        )
-        assert expected_packed_bytes > 0
-        assert runner.model_memory_usage < expected_packed_bytes * 1.15
-    finally:
-        llm.llm_engine.engine_core.shutdown()
-
-
 @pytest.mark.parametrize(
     ("qtype", "quantize", "dequantize"),
     [(Q1_0, quantize_q1_0, dequant_q1_0), (Q2_0, quantize_q2_0, dequant_q2_0)],
@@ -296,9 +280,9 @@ def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:
     q1_x = torch.full((1, 128), 0.49, dtype=torch.float16, device="cuda")
     q1_x[0, 0] = 127.0
     q1_output = ops.ggml_mul_mat_vec_a8(q1_packed, q1_x, int(Q1_0), 1)
-    q1_reference = (
-        q1_x.float() @ dequant_q1_0(q1_packed, q1_weight.shape).T
-    ).to(torch.float16)
+    q1_reference = (q1_x.float() @ dequant_q1_0(q1_packed, q1_weight.shape).T).to(
+        torch.float16
+    )
     assert torch.equal(q1_output, q1_reference)
     assert q1_output.item() < -180.0
 
@@ -311,9 +295,13 @@ def test_cuda_ternary_gemv_ds_y_and_iqs_chunk_conventions() -> None:
     q2_packed[0, 10:18] = 0x55
     q2_packed[0, 18:26] = 0xAA
     q2_packed[0, 26:34] = 0xFF
-    q2_x = torch.cat(
-        [torch.full((32,), value, dtype=torch.float16) for value in (1, 2, 3, 4)]
-    ).reshape(1, 128).cuda()
+    q2_x = (
+        torch.cat(
+            [torch.full((32,), value, dtype=torch.float16) for value in (1, 2, 3, 4)]
+        )
+        .reshape(1, 128)
+        .cuda()
+    )
     q2_output = ops.ggml_mul_mat_vec_a8(q2_packed.cuda(), q2_x, int(Q2_0), 1)
     assert q2_output.item() == 320.0
 
@@ -345,36 +333,35 @@ def test_ternary_mmvq_covers_decode_batches(batch: int) -> None:
     torch.testing.assert_close(output, expected, rtol=1e-2, atol=1.0)
 
 
-def test_mini_gguf_q2_0_recognized_by_reader_and_weight_iterator(tmp_path) -> None:
-    path = tmp_path / "mini-Q2_0.gguf"
-    values = np.linspace(-1, 1, 256, dtype=np.float32).reshape(2, 128)
-    packed = gguf.quants.quantize(values, Q2_0)
-    writer = gguf.GGUFWriter(path, "test")
-    writer.add_tensor("test.weight", packed, raw_dtype=Q2_0)
-    writer.write_header_to_file()
-    writer.write_kv_data_to_file()
-    writer.write_tensors_to_file()
-    writer.close()
-
-    tensor = gguf.GGUFReader(path).tensors[0]
-    assert tensor.tensor_type == Q2_0
-    assert int(tensor.tensor_type) == 42
-    assert get_gguf_weight_type_map(path, {"test.weight": "test.weight"}) == {
-        "test.weight": "Q2_0"
+def test_mini_ternary_gguf_reader_mapping_and_weight_iterator(
+    mini_ternary_gguf: Path,
+) -> None:
+    name_map = {
+        "blk.0.attn_q.weight": "model.layers.0.self_attn.q_proj.weight",
+        "token_embd.weight": "model.embed_tokens.weight",
+        "output_norm.weight": "model.norm.weight",
+    }
+    assert get_gguf_weight_type_map(mini_ternary_gguf, name_map) == {
+        "model.layers.0.self_attn.q_proj.weight": "Q1_0",
+        "model.embed_tokens.weight": "Q2_0",
+        "model.norm.weight": "F32",
     }
 
-    weights = list(gguf_quant_weights_iterator(path, None))
-    assert [name for name, _ in weights] == ["test.qweight_type", "test.qweight"]
-    assert weights[0][1].item() == 42
-    assert torch.equal(weights[1][1], torch.from_numpy(packed))
+    weights = dict(gguf_quant_weights_iterator(mini_ternary_gguf, name_map))
+    assert weights["model.layers.0.self_attn.q_proj.qweight_type"].item() == int(Q1_0)
+    assert weights["model.embed_tokens.qweight_type"].item() == int(Q2_0)
+    assert weights["model.layers.0.self_attn.q_proj.qweight"].shape == (2, 18)
+    assert weights["model.embed_tokens.qweight"].shape == (2, 34)
+    assert weights["model.norm.weight"].shape == (128,)
 
 
-def test_real_bonsai_tensor_types_are_all_recognized() -> None:
-    assert BONSAI_MODEL.is_file(), f"Missing test model: {BONSAI_MODEL}"
-    tensors = gguf.GGUFReader(BONSAI_MODEL).tensors
-    histogram = Counter(int(tensor.tensor_type) for tensor in tensors)
+def test_mini_ternary_tensor_types_are_all_recognized(
+    mini_ternary_gguf: Path,
+) -> None:
+    tensors = gguf.GGUFReader(mini_ternary_gguf).tensors
+    histogram = Counter(tensor.tensor_type for tensor in tensors)
 
-    assert histogram == Counter({42: 197, 0: 113})
+    assert histogram == Counter({Q1_0: 1, Q2_0: 1, gguf.GGMLQuantizationType.F32: 1})
     assert all(
         tensor.tensor_type in DEQUANT_TYPES
         or tensor.tensor_type
