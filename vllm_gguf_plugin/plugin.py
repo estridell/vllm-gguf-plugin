@@ -108,6 +108,8 @@ def _register_omni_diffusion_quantization() -> None:
 
 
 def _register_qwen35_text_model() -> None:
+    if QWEN35_GGUF_ARCHITECTURE in ModelRegistry.models:
+        return
     ModelRegistry.register_model(
         QWEN35_GGUF_ARCHITECTURE,
         "vllm_gguf_plugin.models.qwen3_5:Qwen3_5ForCausalLM",
