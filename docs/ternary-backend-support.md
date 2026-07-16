@@ -13,7 +13,7 @@ compile-only, **fallback** = expected fallback, **gated** = unsupported but
 cleanly gated, and **unknown** = no evidence.
 
 | Backend | fp16 b1 | fp16 b2 | fp16 b3 | fp16 b4 | fp16 b8 | bf16 b1 | bf16 b2 | bf16 b3 | bf16 b4 | bf16 b8 | Above b8 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | NVIDIA sm_75 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass at b9; fallback GEMM |
 | NVIDIA sm_120 | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass | pass at b9; fallback GEMM |
 | CUDA sm_70 | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown | fallback; runtime unknown |
