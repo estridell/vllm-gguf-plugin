@@ -27,6 +27,8 @@ resolve the on-disk ambiguity: ordinary upstream Q2_0 GGUF files must not be
 loaded in this environment, and Bonsai Q2_0 files must not be decoded by an
 ordinary upstream Q2_0 reader. A coordinated non-conflicting type assignment,
 mandatory layout discriminator, or explicit conversion path is still needed.
+The [layout coordination package](../gguf-layout-coordination.md) records the
+byte-level evidence, compatibility options, and unresolved maintainer decisions.
 
 ## Current limits
 

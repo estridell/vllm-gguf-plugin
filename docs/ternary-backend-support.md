@@ -62,9 +62,9 @@ correctness.
 CPU-only import and reference/dispatch tests, with the accelerator hidden:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' .venv/bin/python -c \
+CUDA_VISIBLE_DEVICES='' python -c \
   'import torch, vllm_gguf_plugin; from vllm_gguf_plugin import ops; print(torch.cuda.is_available(), ops._CUDA_AVAILABLE)'
-CUDA_VISIBLE_DEVICES='' .venv/bin/pytest -q tests/test_ternary.py -m 'not cuda and not integration'
+CUDA_VISIBLE_DEVICES='' pytest -q tests/test_ternary.py -m 'not cuda and not integration'
 ```
 
 Result: import reported `False False`; 28 tests passed. These tests cover both
@@ -76,21 +76,17 @@ CUDA 13.2 fatbin compile with GCC 15.3:
 
 ```bash
 CUDA_VISIBLE_DEVICES='' \
-CUDA_HOME="$PWD/.venv/lib/python3.11/site-packages/nvidia/cu13" \
 TORCH_CUDA_ARCH_LIST='7.5;8.0;8.6;8.7;8.9;9.0;10.0;11.0;12.0' \
-CC="$PWD/.toolchain/root/usr/bin/gcc-15" \
-CXX="$PWD/.toolchain/root/usr/bin/g++-15" \
-CUDAHOSTCXX="$PWD/.toolchain/root/usr/bin/g++-15" \
-.venv/bin/python setup.py build_ext --inplace
+python setup.py build_ext --inplace
 ```
 
 Result: passed for sm_75/80/86/87/89/90/100/110/120. The local CUDA 13.2
-toolchain was used because the system GCC 16 is newer than nvcc supports.
+toolchain and GCC 15.3 were used because GCC 16 is newer than nvcc supports.
 
 Runtime suite on the local RTX 2070 (sm_75):
 
 ```bash
-.venv/bin/pytest -q tests/test_ternary.py -m cuda
+pytest -q tests/test_ternary.py -m cuda
 ```
 
 Result: 56 tests passed in 6.14 seconds.
@@ -99,12 +95,7 @@ Runtime suite on `blackwell-box`, RTX 5060 Ti (sm_120), using the same source
 and fatbin mounted read-only in `vllm/vllm-openai:nightly`:
 
 ```bash
-docker run --rm --gpus all --ipc=host \
-  --entrypoint /usr/local/bin/pytest \
-  -v /home/stridell/bonsai/backend-audit-issue5:/workspace:ro \
-  -v /home/stridell/bonsai/prism-gguf-py:/prism:ro \
-  -e PYTHONPATH=/workspace:/prism -w /workspace \
-  vllm/vllm-openai:nightly -q tests/test_ternary.py -m cuda
+pytest -q tests/test_ternary.py -m cuda
 ```
 
 Result: 56 tests passed in 15.28 seconds. Production was restored afterward:
