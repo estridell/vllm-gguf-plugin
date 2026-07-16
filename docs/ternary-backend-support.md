@@ -62,12 +62,15 @@ correctness.
 CPU-only import and reference/dispatch tests, with the accelerator hidden:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' python -c \
-  'import torch, vllm_gguf_plugin; from vllm_gguf_plugin import ops; print(torch.cuda.is_available(), ops._CUDA_AVAILABLE)'
-CUDA_VISIBLE_DEVICES='' pytest -q tests/test_ternary.py -m 'not cuda and not integration'
+CUDA_VISIBLE_DEVICES='' VLLM_GGUF_USE_CUDA=0 python -c \
+  'import torch, vllm_gguf_plugin; from vllm_gguf_plugin import ops; print(torch.cuda.is_available(), ops._CUDA_ENABLED)'
+CUDA_VISIBLE_DEVICES='' VLLM_GGUF_USE_CUDA=0 \
+  pytest -q tests/test_ternary.py -m 'not cuda and not integration'
 ```
 
-Result: import reported `False False`; 28 tests passed. These tests cover both
+Result: import reported `False False`; 28 tests passed. `_CUDA_AVAILABLE`
+reports whether the extension can be imported, so `_CUDA_ENABLED` is the
+portable check for an explicitly disabled compiled path. These tests cover both
 activation dtypes at the dispatch boundary, the b1/2/3/4/8 MMVQ cutoff, b9+
 fallback selection, ROCm gating, reference quantization, and missing-extension
 fallback behavior.
