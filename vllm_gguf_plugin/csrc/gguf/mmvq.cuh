@@ -1,4 +1,9 @@
-// copied and adapted from https://github.com/ggerganov/llama.cpp/blob/b2899/ggml-cuda/mmvq.cu
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2023-2026 The ggml authors
+//
+// Derived from llama.cpp b2899. The Q1_0/Q2_0 dispatch wrappers adapt the
+// PrismML-Eng/llama.cpp CUDA path at 62061f91088281e65071cc38c5f69ee95c39f14e:
+// https://github.com/PrismML-Eng/llama.cpp/blob/62061f91088281e65071cc38c5f69ee95c39f14e/ggml/src/ggml-cuda/mmvq.cu
 template <typename scalar_t, int qk, int qi, typename block_q_t, int vdr, vec_dot_q_cuda_t vec_dot_q_cuda>
 static __global__ void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict__ vy, scalar_t * __restrict__ dst, const int ncols, const int nrows, const int nvecs) {
     const auto row = blockIdx.x*blockDim.y + threadIdx.y;

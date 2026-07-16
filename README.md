@@ -4,6 +4,21 @@ This plugin provides out-of-tree GGUF quantization support for vLLM after
 in-tree support deprecation
 ([vllm-project/vllm#39583](https://github.com/vllm-project/vllm/issues/39583)).
 
+## Experimental Bonsai/Prism ternary support
+
+The `prism-ternary` branch adds the Prism Q1_0 and Q2_0 group-128 tensor
+layouts, packed ternary embeddings and output heads, CUDA dequantization and
+MMVQ kernels, and the Qwen adapters needed to serve the Bonsai 1.7B, 4B, and
+27B GGUF models. This path is experimental: it has been tested on an RTX 2070
+(`sm_75`) and RTX 5060 Ti (`sm_120`), but the unresolved GGUF type-ID 42
+conflict prevents it from becoming the general plugin dependency.
+
+Start with the [Bonsai installation guide](docs/bonsai/installation.md), then
+use the exact [launch examples](docs/bonsai/usage.md). The detailed notes cover
+[correctness validation](docs/bonsai/validation.md), the
+[Bonsai-27B benchmark](docs/bonsai/benchmarks.md), and
+[format safety, resource limits, and unverified areas](docs/bonsai/limitations.md).
+
 ## Installation
 
 ### Prerequisites
@@ -79,6 +94,9 @@ pytest tests/integration/test_ternary_models.py \
 The equivalent environment variables are `VLLM_GGUF_TEST_TERNARY_MODEL`,
 `VLLM_GGUF_TEST_TERNARY_4B_MODEL`, and
 `VLLM_GGUF_TEST_TERNARY_4B_CONFIG`.
+
+The tested and compile-only ternary backend matrix, dispatch rules, and known
+gaps are recorded in [docs/ternary-backend-support.md](docs/ternary-backend-support.md).
 
 ## Usage
 

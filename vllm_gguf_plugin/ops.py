@@ -55,6 +55,11 @@ except ImportError:
 # Effective CUDA usage: only when enabled AND available.
 _CUDA_ENABLED = _USE_CUDA and _CUDA_AVAILABLE
 
+# The vendored ternary MMVQ kernels have not been validated on ROCm. Keep them
+# out of the compiled-extension dispatch until that backend has compile and
+# runtime evidence; ROCm uses the Triton dequantize-plus-matmul path instead.
+_IS_ROCM = torch.version.hip is not None
+
 _CUDA_GEMV_QUANT_TYPES = frozenset(
     {
         GGML_TYPE_Q1_0,
@@ -105,6 +110,8 @@ def _cuda_kernel_available(op_name: str, quant_type: int | None = None) -> bool:
         return False
     if quant_type is None:
         return True
+    if _IS_ROCM and int(quant_type) in _TERNARY_QUANT_TYPES:
+        return False
     return int(quant_type) in _CUDA_GEMV_QUANT_TYPES
 
 
