@@ -17,6 +17,11 @@ BLOCK_VALUES, BLOCK_BYTES = gguf.GGML_QUANT_SIZES[QUANT_TYPE]
 # dequantize-plus-matmul fallback path.
 BATCH_SIZE = 32
 
+pytestmark = pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="CUDA required for dequantization chunking tests.",
+)
+
 
 @pytest.fixture(autouse=True)
 def _seed():
