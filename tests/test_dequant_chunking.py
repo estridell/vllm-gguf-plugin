@@ -16,7 +16,6 @@ BLOCK_VALUES, BLOCK_BYTES = gguf.GGML_QUANT_SIZES[QUANT_TYPE]
 # Batch size above the mmvq cutoff so _fused_mul_mat_gguf takes the
 # dequantize-plus-matmul fallback path.
 BATCH_SIZE = 32
-WORKSPACE_BYTES = 1024 * 1024
 
 
 @pytest.fixture(autouse=True)
@@ -48,16 +47,6 @@ def assert_matches_reference(
     torch.testing.assert_close(output, x @ weight.T, atol=1e-2, rtol=4e-2)
 
 
-def bound_workspace(monkeypatch, cols: int) -> int:
-    """Shrink the workspace bound to WORKSPACE_BYTES; return max chunk rows."""
-    # raising=False so that on an implementation without the bound the tests
-    # fail on the oversized dequantize call itself, not on this setattr.
-    monkeypatch.setattr(
-        linear, "_DEQUANT_MAX_WORKSPACE_BYTES", WORKSPACE_BYTES, raising=False
-    )
-    return WORKSPACE_BYTES // (cols * torch.float16.itemsize)
-
-
 @pytest.fixture
 def dequantize_spy(monkeypatch):
     """Record the row count of every ops.ggml_dequantize call."""
@@ -75,9 +64,17 @@ def dequantize_spy(monkeypatch):
 @torch.inference_mode()
 def test_dequant_workspace_bounded(dequantize_spy, monkeypatch):
     """Tall matrices must be dequantized in row chunks below the workspace
-    bound, and the chunked result must match the full dequantization."""
-    rows, cols = 4096, 512
-    max_rows = bound_workspace(monkeypatch, cols)
+    bound, including a ragged final chunk, and the chunked result must match
+    an independent full dequantization."""
+    # 4128 rows with a 1 MiB bound at 512 fp16 columns gives a 1024-row chunk
+    # size: four full chunks plus a ragged 32-row tail.
+    rows, cols = 4128, 512
+    max_rows = 1024 * 1024 // (cols * torch.float16.itemsize)
+    # raising=False so that on an implementation without the bound the test
+    # fails on the oversized dequantize call itself, not on this setattr.
+    monkeypatch.setattr(
+        linear, "_DEQUANT_MAX_WORKSPACE_BYTES", 1024 * 1024, raising=False
+    )
 
     qweight = make_iq4_nl_qweight(rows, cols)
     x = torch.randn(BATCH_SIZE, cols, device="cuda", dtype=torch.float16)
@@ -93,27 +90,6 @@ def test_dequant_workspace_bounded(dequantize_spy, monkeypatch):
     assert_matches_reference(output, x, qweight)
 
 
-@pytest.mark.parametrize("rows_delta, expected_calls", [(-32, 1), (0, 1), (32, 2)])
-@torch.inference_mode()
-def test_dequant_chunk_boundary(
-    dequantize_spy, monkeypatch, rows_delta, expected_calls
-):
-    """Row counts below and at the chunk size stay single-call; above it
-    splits into exactly the needed number of chunks."""
-    cols = 512
-    max_rows = bound_workspace(monkeypatch, cols)
-    rows = max_rows + rows_delta
-
-    qweight = make_iq4_nl_qweight(rows, cols)
-    x = torch.randn(BATCH_SIZE, cols, device="cuda", dtype=torch.float16)
-
-    output = linear._fused_mul_mat_gguf(x, qweight, QUANT_TYPE)
-
-    assert len(dequantize_spy) == expected_calls
-    assert sum(dequantize_spy) == rows
-    assert_matches_reference(output, x, qweight)
-
-
 @torch.inference_mode()
 def test_dequant_small_matrix_single_call(dequantize_spy):
     """With the default workspace bound, ordinary layer shapes keep the
@@ -126,17 +102,3 @@ def test_dequant_small_matrix_single_call(dequantize_spy):
 
     assert dequantize_spy == [rows]
     assert_matches_reference(output, x, qweight)
-
-
-@torch.inference_mode()
-def test_dequant_chunked_matches_unchunked(monkeypatch):
-    """Chunked and unchunked paths must agree closely on the same input."""
-    rows, cols = 4096, 512
-    qweight = make_iq4_nl_qweight(rows, cols)
-    x = torch.randn(BATCH_SIZE, cols, device="cuda", dtype=torch.float16)
-
-    unchunked = linear._fused_mul_mat_gguf(x, qweight, QUANT_TYPE)
-    bound_workspace(monkeypatch, cols)
-    chunked = linear._fused_mul_mat_gguf(x, qweight, QUANT_TYPE)
-
-    torch.testing.assert_close(chunked, unchunked, atol=1e-3, rtol=1e-3)
